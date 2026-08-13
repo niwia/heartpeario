@@ -4,10 +4,12 @@
       <!-- Modal Header -->
       <div class="modal-header">
         <div class="header-title">
-          <span class="icon">💬</span>
-          <h2>Subtitles & Audio</h2>
+          <Icon name="subtitles" size="20" />
+          <h2>Subtitles & Timing</h2>
         </div>
-        <button class="close-btn" @click="$emit('close')" title="Close">✕</button>
+        <button class="close-btn" @click="$emit('close')" title="Close">
+          <Icon name="close" size="18" />
+        </button>
       </div>
 
       <!-- Modal Body -->
@@ -15,7 +17,7 @@
 
         <!-- Subtitle Sync Offset Controls -->
         <div class="offset-section">
-          <span class="section-label">Subtitle Sync Timing</span>
+          <span class="section-label">Subtitle Sync Calibration</span>
           <div class="offset-controls">
             <button class="offset-btn" @click="adjustOffset(-2500)">-2.5s</button>
             <button class="offset-btn" @click="adjustOffset(-500)">-0.5s</button>
@@ -44,8 +46,8 @@
             style="display: none"
             @change="onFileSelected"
           />
-          <span class="drop-icon">📁</span>
-          <p class="drop-text">Drag & drop your own <code>.srt</code> or <code>.vtt</code> file here, or click to browse</p>
+          <Icon name="subtitles" size="24" />
+          <p class="drop-text">Drag & drop your custom <code>.srt</code> or <code>.vtt</code> file here, or click to browse</p>
         </div>
 
         <!-- Subtitles List -->
@@ -61,8 +63,8 @@
               :class="{ active: !currentSubtitle }"
               @click="chooseSubtitle(null)"
             >
-              <span class="sub-lang">🚫 Off</span>
-              <span class="sub-check" v-if="!currentSubtitle">✓</span>
+              <span class="sub-lang">Disabled</span>
+              <Icon v-if="!currentSubtitle" name="check" size="16" />
             </button>
 
             <!-- Remote subtitle tracks -->
@@ -77,7 +79,7 @@
                 <span class="sub-lang">{{ getLanguageName(sub.lang) }}</span>
                 <span class="sub-code">{{ sub.lang?.toUpperCase() }}</span>
               </div>
-              <span class="sub-check" v-if="currentSubtitle?.url === sub.url">✓</span>
+              <Icon v-if="currentSubtitle?.url === sub.url" name="check" size="16" />
             </button>
 
             <div v-if="!availableSubs.length" class="no-subs">
@@ -99,6 +101,7 @@
 <script setup>
 import { ref } from 'vue';
 import { getLanguageName } from '@/services/subtitle.service';
+import Icon from '@/components/Icon.vue';
 
 const props = defineProps({
   availableSubs: {
@@ -198,7 +201,6 @@ function handleCustomFile(file) {
   align-items: center;
   gap: 10px;
 }
-.header-title .icon { font-size: 1.3rem; }
 .header-title h2 {
   font-size: 1.15rem;
   font-weight: 700;
@@ -212,7 +214,6 @@ function handleCustomFile(file) {
   align-items: center;
   justify-content: center;
   color: var(--muted);
-  font-size: 1.1rem;
   transition: color 0.15s, background 0.15s;
 }
 .close-btn:hover { color: var(--text); background: var(--surface2); }
@@ -285,7 +286,7 @@ function handleCustomFile(file) {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 16px;
   background: var(--surface2);
   border: 1px dashed var(--border-light);
@@ -293,15 +294,15 @@ function handleCustomFile(file) {
   cursor: pointer;
   text-align: center;
   transition: all 0.15s;
+  color: var(--muted);
 }
 .drop-zone:hover, .drop-zone.dragging {
   border-color: var(--accent);
   background: var(--accent-dim);
+  color: var(--accent);
 }
-.drop-icon { font-size: 1.5rem; }
 .drop-text {
   font-size: 0.82rem;
-  color: var(--muted);
 }
 .drop-text code {
   color: var(--text);
@@ -362,10 +363,6 @@ function handleCustomFile(file) {
   background: rgba(255,255,255,0.06);
   padding: 2px 6px;
   border-radius: 999px;
-}
-.sub-check {
-  font-weight: 700;
-  color: var(--accent);
 }
 
 .no-subs {

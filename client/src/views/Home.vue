@@ -100,7 +100,7 @@ function createRoom() {
 }
 
 function joinRoom() {
-  const code = joinCode.value.trim().toUpperCase();
+  const code = joinCode.value.trim().replace(/[^A-Z0-9]/gi, '').toUpperCase();
   if (!code) return;
   error.value = '';
   applyUsername();

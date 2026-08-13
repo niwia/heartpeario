@@ -5,17 +5,6 @@ const STORAGE_KEY = 'heartpeario_addons';
 
 const DEFAULT_ADDONS = [
   {
-    id: 'com.penguplay',
-    name: 'PenguPlay',
-    version: '1.3.8',
-    description: 'Stream movies and series in Stremio with configurable provider and quality filters.',
-    logo: 'https://pengu.uk/penguplay-icon.png',
-    manifestUrl: 'https://pengu.uk/%7B%22auth_token%22%3A%22S1vBR0ymwjN_MQASD8xINK8x4e6lJn7D5a6fzD8fGsA%22%7D/manifest.json',
-    resources: [{ name: 'stream' }, { name: 'subtitles' }],
-    types: ['movie', 'series'],
-    enabled: true,
-  },
-  {
     id: 'community.cinemeta',
     name: 'Cinemeta Catalog',
     version: '3.0.12',

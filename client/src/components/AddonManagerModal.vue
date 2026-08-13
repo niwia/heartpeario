@@ -3,15 +3,17 @@
     <div class="modal-card">
       <div class="modal-header">
         <div class="header-title">
-          <span class="icon">🧩</span>
+          <Icon name="addons" size="20" />
           <h2>Stremio Addons</h2>
         </div>
-        <button class="close-btn" @click="$emit('close')" title="Close">✕</button>
+        <button class="close-btn" @click="$emit('close')" title="Close">
+          <Icon name="close" size="18" />
+        </button>
       </div>
 
       <div class="modal-body">
         <p class="desc">
-          Install any Stremio-compatible addon (PenguPlay, Torrentio, StremThru, etc.) to discover and stream movies and series with your room.
+          Install any Stremio-compatible addon (Torrentio, StremThru, etc.) to discover and stream movies and series with your room. Addons are saved securely in your browser.
         </p>
 
         <!-- Install Addon Form -->
@@ -19,12 +21,12 @@
           <input
             v-model="manifestInput"
             type="text"
-            placeholder="Paste Stremio manifest URL (e.g. https://pengu.uk/.../manifest.json)"
+            placeholder="Paste Stremio manifest URL (e.g. https://.../manifest.json)"
             :disabled="addonsStore.loading"
             spellcheck="false"
           />
           <button type="submit" class="btn-install" :disabled="!manifestInput.trim() || addonsStore.loading">
-            <span v-if="!addonsStore.loading">+ Install Addon</span>
+            <span v-if="!addonsStore.loading">Install Addon</span>
             <span v-else class="spinner"></span>
           </button>
         </form>
@@ -37,7 +39,9 @@
           <div v-for="addon in addonsStore.addons" :key="addon.id" class="addon-item" :class="{ disabled: !addon.enabled }">
             <div class="addon-left">
               <img v-if="addon.logo" :src="addon.logo" class="addon-logo" alt="" />
-              <span v-else class="addon-logo-ph">📦</span>
+              <div v-else class="addon-logo-ph">
+                <Icon name="addons" size="20" />
+              </div>
               <div class="addon-info">
                 <div class="addon-title-row">
                   <span class="addon-name">{{ addon.name }}</span>
@@ -62,7 +66,7 @@
                 @click="addonsStore.removeAddon(addon.id)"
                 title="Uninstall addon"
               >
-                🗑
+                <Icon name="close" size="14" />
               </button>
             </div>
           </div>
@@ -80,6 +84,7 @@
 <script setup>
 import { ref } from 'vue';
 import { useAddonsStore } from '@/stores/addons';
+import Icon from '@/components/Icon.vue';
 
 defineEmits(['close']);
 const addonsStore = useAddonsStore();
@@ -149,7 +154,6 @@ function resetDefaults() {
   align-items: center;
   gap: 10px;
 }
-.header-title .icon { font-size: 1.4rem; }
 .header-title h2 {
   font-size: 1.15rem;
   font-weight: 700;
@@ -163,7 +167,6 @@ function resetDefaults() {
   align-items: center;
   justify-content: center;
   color: var(--muted);
-  font-size: 1.1rem;
   transition: color 0.15s, background 0.15s;
 }
 .close-btn:hover { color: var(--text); background: var(--surface2); }
@@ -261,11 +264,13 @@ function resetDefaults() {
   flex-shrink: 0;
 }
 .addon-logo-ph {
-  font-size: 1.6rem;
   width: 38px; height: 38px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.06);
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--muted);
   flex-shrink: 0;
 }
 

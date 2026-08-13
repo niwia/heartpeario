@@ -25,7 +25,7 @@ const MIME_TYPES = {
 const server = http.createServer((req, res) => {
   if (!fs.existsSync(DIST_DIR)) {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    return res.end('❤️ HeartPeario WebSocket Sync Server running.');
+    return res.end('HeartPeario WebSocket Sync Server running.');
   }
 
   let reqPath = req.url.split('?')[0];
@@ -34,7 +34,6 @@ const server = http.createServer((req, res) => {
   }
   let filePath = path.join(DIST_DIR, reqPath === '/' ? 'index.html' : reqPath);
 
-  // Security check: stay within DIST_DIR
   if (!filePath.startsWith(DIST_DIR)) {
     res.writeHead(403);
     return res.end('Forbidden');
@@ -46,7 +45,6 @@ const server = http.createServer((req, res) => {
     return fs.createReadStream(filePath).pipe(res);
   }
 
-  // SPA fallback to index.html
   const indexPath = path.join(DIST_DIR, 'index.html');
   if (fs.existsSync(indexPath)) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=UTF-8' });
@@ -59,8 +57,24 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocket.Server({ server });
 
-/** @type {Map<string, Room>} */
 const rooms = new Map();
+
+// ── Persistent Test Room 'TEST' ───────────────────────────────────────────
+const testRoom = {
+  id: 'TEST',
+  hostId: 'SYSTEM',
+  url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+  mediaMeta: {
+    title: 'Big Buck Bunny (Test Stream)',
+    type: 'movie',
+    year: '2026',
+    poster: 'https://upload.wikimedia.org/wikipedia/commons/c/c5/Big_buck_bunny_poster_big.jpg',
+  },
+  subtitles: [],
+  player: { paused: false, time: 0, serverTime: Date.now() },
+  clients: new Map(),
+};
+rooms.set('TEST', testRoom);
 
 /**
  * @typedef {{ id: string, name: string, color: string }} UserMeta
@@ -68,9 +82,19 @@ const rooms = new Map();
  */
 
 const COLORS = ['#e03d5a', '#5a7de0', '#3dbe7a', '#e0a83d', '#a03de0', '#e05a3d', '#3dbde0'];
+const CLEAN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
-function genId(len = 6) {
-  return randomBytes(8).toString('base64url').slice(0, len).toUpperCase();
+function genRoomCode(len = 6) {
+  const bytes = randomBytes(len);
+  let result = '';
+  for (let i = 0; i < len; i++) {
+    result += CLEAN_ALPHABET[bytes[i] % CLEAN_ALPHABET.length];
+  }
+  return result;
+}
+
+function normalizeCode(code) {
+  return (code || '').replace(/[^A-Z0-9]/gi, '').toUpperCase().trim();
 }
 
 function send(ws, type, payload) {
@@ -93,12 +117,42 @@ function roomUsers(room) {
   return Array.from(room.clients.values()).map(u => ({ id: u.id, name: u.name, color: u.color }));
 }
 
-wss.on('connection', (ws) => {
-  const userId = genId(12);
+function formatTime(s) {
+  if (!s || !isFinite(s)) return '0:00';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60).toString().padStart(2, '0');
+  const h = Math.floor(m / 60);
+  const remM = (m % 60).toString().padStart(2, '0');
+  return h > 0 ? `${h}:${remM}:${sec}` : `${m}:${sec}`;
+}
+
+function logServer(msg) {
+  const ts = new Date().toTimeString().split(' ')[0];
+  console.log(`[${ts}] ${msg}`);
+}
+
+function broadcastSystemMessage(room, text) {
+  if (!room) return;
+  logServer(`[Room ${room.id}] System: ${text}`);
+  broadcastAll(room, 'room.message', {
+    userId: 'system',
+    name: 'System',
+    color: '#7a7a8a',
+    content: text,
+    isSystem: true,
+    ts: Date.now(),
+  });
+}
+
+wss.on('connection', (ws, req) => {
+  const ip = req.socket.remoteAddress;
+  const userId = genRoomCode(10);
   const color = COLORS[Math.floor(Math.random() * COLORS.length)];
-  let user = { id: userId, name: `User${genId(4)}`, color };
+  let user = { id: userId, name: `User${genRoomCode(4)}`, color };
   /** @type {Room|null} */
   let room = null;
+
+  logServer(`Client connected from ${ip} (Assigned ID: ${userId})`);
 
   ws.on('message', (raw) => {
     let msg;
@@ -106,39 +160,67 @@ wss.on('connection', (ws) => {
     const { type, payload = {} } = msg;
 
     switch (type) {
-      // ── Room management ─────────────────────────────────────────────────
+      // ── Room creation ───────────────────────────────────────────────────
       case 'room.create': {
-        const id = genId();
-        room = {
-          id,
-          hostId: userId,
-          url: null,
-          mediaMeta: null,
-          subtitles: [],
-          player: { paused: true, time: 0, serverTime: Date.now() },
-          clients: new Map([[ws, user]]),
-        };
-        rooms.set(id, room);
+        const id = 'TEST';
+        if (!rooms.has(id)) {
+          room = {
+            id,
+            hostId: userId,
+            url: null,
+            mediaMeta: null,
+            subtitles: [],
+            player: { paused: true, time: 0, serverTime: Date.now() },
+            clients: new Map([[ws, user]]),
+          };
+          rooms.set(id, room);
+        } else {
+          room = rooms.get(id);
+          room.clients.set(ws, user);
+        }
+        logServer(`[Room ${id}] Created/Joined by ${user.name} (${userId})`);
+
         send(ws, 'room.joined', {
           roomId: id,
-          isHost: true,
+          isHost: room.hostId === userId || room.hostId === 'SYSTEM',
           you: user,
           users: roomUsers(room),
-          url: null,
-          mediaMeta: null,
-          subtitles: [],
-          player: room.player,
+          url: room.url,
+          mediaMeta: room.mediaMeta,
+          subtitles: room.subtitles,
+          player: { ...room.player, serverTime: Date.now() },
         });
+        broadcast(room, 'room.users', { users: roomUsers(room) }, ws);
+        broadcastSystemMessage(room, `${user.name} entered the room`);
         break;
       }
 
+      // ── Room joining ─────────────────────────────────────────────────────
       case 'room.join': {
-        const id = (payload.roomId || '').toUpperCase().trim();
+        const rawCode = payload.roomId || '';
+        let id = normalizeCode(rawCode);
+        if (id === '000') id = 'TEST';
+
+        logServer(`Join request: "${rawCode}" -> normalized: "${id}" by ${user.name}`);
+
         const target = rooms.get(id);
-        if (!target) { send(ws, 'error', { message: 'Room not found' }); break; }
+        if (!target) {
+          logServer(`Join failed: Room "${id}" not found. Active rooms: [${Array.from(rooms.keys()).join(', ')}]`);
+          send(ws, 'error', { message: 'Room not found', requestedCode: id });
+          break;
+        }
+
+        // Leave previous room if any
+        if (room && room !== target) {
+          room.clients.delete(ws);
+          broadcastAll(room, 'room.users', { users: roomUsers(room) });
+        }
+
         room = target;
         room.clients.set(ws, user);
-        const isHost = room.hostId === userId;
+        const isHost = room.hostId === userId || room.hostId === 'SYSTEM';
+        logServer(`[Room ${id}] ${user.name} joined. Total users: ${room.clients.size}`);
+
         send(ws, 'room.joined', {
           roomId: id,
           isHost,
@@ -149,7 +231,9 @@ wss.on('connection', (ws) => {
           subtitles: room.subtitles || [],
           player: { ...room.player, serverTime: Date.now() },
         });
+
         broadcast(room, 'room.users', { users: roomUsers(room) }, ws);
+        broadcastSystemMessage(room, `${user.name} joined the room`);
         break;
       }
 
@@ -157,10 +241,15 @@ wss.on('connection', (ws) => {
       case 'user.name': {
         const name = (payload.name || '').trim().slice(0, 30);
         if (!name) break;
+        const oldName = user.name;
         user = { ...user, name };
+        logServer(`User ${userId} renamed: "${oldName}" -> "${name}"`);
         if (room) {
           room.clients.set(ws, user);
           broadcastAll(room, 'room.users', { users: roomUsers(room) });
+          if (oldName !== name) {
+            broadcastSystemMessage(room, `${oldName} changed name to ${name}`);
+          }
         }
         break;
       }
@@ -172,13 +261,18 @@ wss.on('connection', (ws) => {
         room.url = url || null;
         room.mediaMeta = payload.mediaMeta || null;
         room.subtitles = Array.isArray(payload.subtitles) ? payload.subtitles : [];
-        // reset player state when URL changes
         room.player = { paused: true, time: 0, serverTime: Date.now() };
+
+        logServer(`[Room ${room.id}] URL loaded by ${user.name}: ${url ? url.slice(0, 60) + '...' : 'none'}`);
+
         broadcastAll(room, 'player.url', {
           url: room.url,
           mediaMeta: room.mediaMeta,
           subtitles: room.subtitles,
         });
+
+        const title = room.mediaMeta?.title ? `${room.mediaMeta.title} ${room.mediaMeta.episodeTitle || ''}` : 'direct video URL';
+        broadcastSystemMessage(room, `${user.name} loaded: ${title}`);
         break;
       }
 
@@ -186,9 +280,26 @@ wss.on('connection', (ws) => {
       case 'player.sync': {
         if (!room) break;
         const { paused, time } = payload;
-        room.player = { paused: !!paused, time: parseFloat(time) || 0, serverTime: Date.now() };
-        // Relay to everyone else with the server timestamp for compensation
+        const prevPaused = room.player.paused;
+        const prevTime = room.player.time || 0;
+        const newTime = Math.max(0, parseFloat(time) || 0);
+
+        room.player = { paused: !!paused, time: newTime, serverTime: Date.now() };
+        logServer(`[Room ${room.id}] Sync from ${user.name}: ${paused ? 'PAUSE' : 'PLAY'} at ${formatTime(newTime)}`);
+
+        // Relay to everyone else with server timestamp
         broadcast(room, 'player.sync', room.player, ws);
+
+        // Chat log
+        if (prevPaused !== !!paused) {
+          if (paused) {
+            broadcastSystemMessage(room, `${user.name} paused at ${formatTime(newTime)}`);
+          } else {
+            broadcastSystemMessage(room, `${user.name} played at ${formatTime(newTime)}`);
+          }
+        } else if (Math.abs(prevTime - newTime) > 2) {
+          broadcastSystemMessage(room, `${user.name} seeked to ${formatTime(newTime)}`);
+        }
         break;
       }
 
@@ -197,11 +308,13 @@ wss.on('connection', (ws) => {
         if (!room) break;
         const content = (payload.content || '').trim().slice(0, 300);
         if (!content) break;
+        logServer(`[Room ${room.id}] Chat from ${user.name}: "${content}"`);
         broadcastAll(room, 'room.message', {
           userId,
           name: user.name,
           color: user.color,
           content,
+          isSystem: false,
           ts: Date.now(),
         });
         break;
@@ -210,25 +323,37 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    logServer(`Client disconnected: ${user.name} (${userId})`);
     if (!room) return;
     room.clients.delete(ws);
+    broadcastSystemMessage(room, `${user.name} left the room`);
+
     if (room.clients.size === 0) {
-      rooms.delete(room.id);
-      console.log(`Room ${room.id} closed (empty)`);
+      if (room.id !== 'TEST' && room.id !== '000') {
+        rooms.delete(room.id);
+        logServer(`Room ${room.id} deleted (all users left)`);
+      } else {
+        logServer(`Test Room ${room.id} is now empty and standing by`);
+      }
       return;
     }
+
     // Re-assign host if host left
     if (room.hostId === userId) {
       const [nextWs, nextUser] = room.clients.entries().next().value;
       room.hostId = nextUser.id;
       broadcastAll(room, 'room.host', { hostId: nextUser.id });
+      broadcastSystemMessage(room, `${nextUser.name} is now the room host`);
     }
     broadcastAll(room, 'room.users', { users: roomUsers(room) });
   });
 
-  ws.on('error', () => ws.close());
+  ws.on('error', (err) => {
+    logServer(`WS error for ${user.name}: ${err.message}`);
+    ws.close();
+  });
 });
 
-server.listen(PORT, () => {
-  console.log(`❤️  HeartPeario server running on http://localhost:${PORT}`);
+server.listen(PORT, '0.0.0.0', () => {
+  logServer(`❤️  HeartPeario server running on http://0.0.0.0:${PORT}`);
 });

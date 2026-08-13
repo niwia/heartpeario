@@ -9,11 +9,13 @@
             ←
           </button>
           <div class="header-title">
-            <span class="icon">🔍</span>
+            <Icon name="search" size="20" />
             <h2>{{ selectedItem ? selectedItem.name : 'Search Movies & Shows' }}</h2>
           </div>
         </div>
-        <button class="close-btn" @click="$emit('close')" title="Close">✕</button>
+        <button class="close-btn" @click="$emit('close')" title="Close">
+          <Icon name="close" size="18" />
+        </button>
       </div>
 
       <!-- Modal Content -->
@@ -26,13 +28,15 @@
               ref="searchInputEl"
               v-model="searchQuery"
               type="text"
-              placeholder="Search by title (e.g. Scary Movie, Inception, Breaking Bad)…"
+              placeholder="Search by title (e.g. Inception, Breaking Bad, Scary Movie)…"
               spellcheck="false"
               autocomplete="off"
               @input="onSearchInput"
             />
             <span v-if="searching" class="spinner"></span>
-            <button v-else-if="searchQuery" class="clear-btn" @click="clearSearch">✕</button>
+            <button v-else-if="searchQuery" class="clear-btn" @click="clearSearch">
+              <Icon name="close" size="16" />
+            </button>
           </div>
 
           <!-- Type Filter Tabs -->
@@ -63,7 +67,9 @@
             >
               <div class="poster-wrap">
                 <img v-if="item.poster" :src="item.poster" class="poster-img" alt="" loading="lazy" />
-                <div v-else class="poster-ph">🎬</div>
+                <div v-else class="poster-ph">
+                  <Icon name="play" size="28" />
+                </div>
                 <span class="year-badge">{{ item.releaseInfo || item.year || '' }}</span>
               </div>
               <div class="media-meta">
@@ -104,7 +110,6 @@
 
           <!-- Season / Episode Picker for Series -->
           <div v-if="selectedItem.type === 'series' && seasonsList.length" class="episodes-picker">
-            <!-- Season Pills -->
             <div class="seasons-row">
               <button
                 v-for="s in seasonsList"
@@ -117,7 +122,6 @@
               </button>
             </div>
 
-            <!-- Episode Selector -->
             <div class="episodes-list">
               <button
                 v-for="ep in currentSeasonEpisodes"
@@ -159,14 +163,15 @@
                 </div>
 
                 <button class="btn-play-stream" title="Stream in room for everyone">
-                  ▶ Play for Room
+                  <Icon name="play" size="14" />
+                  <span>Play for Room</span>
                 </button>
               </div>
             </div>
 
             <div v-else-if="!loadingStreams" class="no-streams">
               <p>No playable streams found for this title from your active addons.</p>
-              <p class="no-streams-sub">Make sure your addons (PenguPlay, Torrentio, etc.) are installed and configured.</p>
+              <p class="no-streams-sub">Make sure your addons are installed in the Addons manager.</p>
             </div>
           </div>
 
@@ -181,6 +186,7 @@
 import { ref, computed, onMounted, nextTick } from 'vue';
 import { useAddonsStore } from '@/stores/addons';
 import { searchCatalog, getMeta, fetchStreams, fetchSubtitles } from '@/services/stremio.service';
+import Icon from '@/components/Icon.vue';
 
 const emit = defineEmits(['close', 'selectStream']);
 const addonsStore = useAddonsStore();
@@ -386,7 +392,6 @@ onMounted(() => {
   gap: 10px;
   overflow: hidden;
 }
-.header-title .icon { font-size: 1.3rem; }
 .header-title h2 {
   font-size: 1.15rem;
   font-weight: 700;
@@ -416,7 +421,6 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   color: var(--muted);
-  font-size: 1.1rem;
   transition: color 0.15s, background 0.15s;
 }
 .close-btn:hover { color: var(--text); background: var(--surface2); }
@@ -455,7 +459,9 @@ onMounted(() => {
   position: absolute;
   right: 12px;
   color: var(--muted);
-  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .clear-btn:hover { color: var(--text); }
 
@@ -523,7 +529,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 2.4rem;
+  color: var(--muted);
 }
 
 .year-badge {
@@ -801,6 +807,9 @@ onMounted(() => {
 
 .btn-play-stream {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 16px;
   background: var(--accent);
   border-radius: var(--radius-sm);
