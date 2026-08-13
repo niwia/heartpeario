@@ -187,10 +187,11 @@
           crossorigin="anonymous"
           @play="onPlay"
           @pause="onPause"
+          @seeking="onSeeking"
           @seeked="onSeeked"
           @timeupdate="onTimeUpdate"
           @durationchange="onDurationChange"
-          @waiting="() => (buffering = true)"
+          @waiting="onWaiting"
           @canplay="onCanPlay"
           @error="onVideoError"
           @dblclick.stop="toggleFullscreen"
@@ -204,6 +205,22 @@
             default
           />
         </video>
+
+        <!-- All-Peers Buffer & Readiness Sync Banner -->
+        <div v-if="roomReadiness.waiting && room.url && room.users.length > 1" class="readiness-overlay">
+          <div class="readiness-card">
+            <div class="readiness-spinner"></div>
+            <div class="readiness-info">
+              <span class="readiness-title">Syncing Viewers… ({{ roomReadiness.readyCount }}/{{ roomReadiness.totalCount }} Ready)</span>
+              <span v-if="roomReadiness.waitingFor.length" class="readiness-sub">
+                Waiting for: <strong>{{ roomReadiness.waitingFor.join(', ') }}</strong> to buffer
+              </span>
+            </div>
+            <button v-if="room.isHost" class="btn-force-play" @click="forcePlayNow" title="Start playing without waiting">
+              Force Play
+            </button>
+          </div>
+        </div>
 
         <!-- Tap-to-Play Overlay for Mobile Autoplay Policy -->
         <div v-if="room.url && needsUserTapToPlay" class="tap-play-overlay" @click="handleUserTapToPlay">
@@ -519,6 +536,7 @@ const showUrlBar = ref(false);
 const copied     = ref(false);
 const toast      = ref('');
 const controlsHidden = ref(false);
+const roomReadiness = ref({ waiting: false, readyCount: 0, totalCount: 0, waitingFor: [] });
 
 // ── Sync Engine State ─────────────────────────────────────────────────────
 let isApplyingRemoteSync = false;
@@ -816,8 +834,19 @@ function onDurationChange() {
   if (videoEl.value) duration.value = videoEl.value.duration;
 }
 
+function onWaiting() {
+  buffering.value = true;
+  socket.send('player.buffering', { buffering: true });
+}
+
+function onSeeking() {
+  socket.send('player.readiness', { ready: false, time: videoEl.value?.currentTime || 0 });
+}
+
 function onCanPlay() {
   buffering.value = false;
+  socket.send('player.readiness', { ready: true, time: videoEl.value?.currentTime || 0 });
+  socket.send('player.buffering', { buffering: false });
   if (videoEl.value) {
     videoEl.value.volume = isMuted.value ? 0 : volume.value;
     videoEl.value.muted = isMuted.value;
@@ -829,6 +858,10 @@ function onCanPlay() {
       applySync(syncToApply);
     }, 60);
   }
+}
+
+function forcePlayNow() {
+  socket.send('room.force_play');
 }
 
 function onVideoError() {
@@ -1143,6 +1176,15 @@ onMounted(async () => {
     socket.on('player.sync', (data) => {
       room.player = data;
       applySync(data);
+    }),
+
+    socket.on('room.readiness', (data) => {
+      roomReadiness.value = {
+        waiting: !data.allReady,
+        readyCount: data.readyCount,
+        totalCount: data.totalCount,
+        waitingFor: data.waitingFor || [],
+      };
     }),
 
     socket.on('room.message', (msg) => {
@@ -1601,6 +1643,67 @@ video {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
+
+/* All-Peers Readiness Overlay */
+.readiness-overlay {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  animation: slide-down 0.25s ease both;
+  pointer-events: auto;
+  max-width: 90%;
+}
+.readiness-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(18, 18, 26, 0.95);
+  border: 1px solid rgba(224, 61, 90, 0.4);
+  border-radius: 999px;
+  padding: 8px 18px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+}
+.readiness-spinner {
+  width: 18px; height: 18px;
+  border: 2px solid rgba(224, 61, 90, 0.3);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.readiness-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.readiness-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.readiness-sub {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.readiness-sub strong {
+  color: var(--gold);
+}
+.btn-force-play {
+  padding: 5px 12px;
+  background: var(--accent);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fff;
+  transition: filter 0.15s;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+.btn-force-play:hover { filter: brightness(1.2); }
 
 .tap-play-overlay {
   position: absolute;

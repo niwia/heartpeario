@@ -273,6 +273,115 @@ wss.on('connection', (ws, req) => {
 
         const title = room.mediaMeta?.title ? `${room.mediaMeta.title} ${room.mediaMeta.episodeTitle || ''}` : 'direct video URL';
         broadcastSystemMessage(room, `${user.name} loaded: ${title}`);
+
+        // Reset buffer readiness for all room clients
+        room.readiness = new Map();
+        room.waitingToPlay = room.clients.size > 1;
+        room.pendingPlayTime = 0;
+        broadcastAll(room, 'room.readiness', {
+          readyCount: 0,
+          totalCount: room.clients.size,
+          waitingFor: Array.from(room.clients.values()).map(u => u.name),
+          allReady: room.clients.size <= 1,
+        });
+        break;
+      }
+
+      // ── Client Buffer & Readiness Reporting ──────────────────────────────
+      case 'player.readiness': {
+        if (!room) break;
+        const { ready, time } = payload;
+        if (!room.readiness) room.readiness = new Map();
+        room.readiness.set(userId, { ready: !!ready, name: user.name, time: parseFloat(time) || 0 });
+
+        const totalUsers = room.clients.size;
+        const readyCount = Array.from(room.readiness.values()).filter(r => r.ready).length;
+        const waitingFor = Array.from(room.clients.values())
+          .filter(u => !room.readiness.get(u.id)?.ready)
+          .map(u => u.name);
+
+        logServer(`[Room ${room.id}] Buffer readiness: ${readyCount}/${totalUsers} ready. (Waiting for: ${waitingFor.join(', ') || 'none'})`);
+
+        broadcastAll(room, 'room.readiness', {
+          readyCount,
+          totalCount: totalUsers,
+          waitingFor,
+          allReady: readyCount >= totalUsers,
+        });
+
+        // If everyone is ready and room is waiting to unpause
+        if (readyCount >= totalUsers && room.waitingToPlay) {
+          clearTimeout(room.readinessSafetyTimer);
+          room.waitingToPlay = false;
+          room.seq = (room.seq || 0) + 1;
+          const startTime = room.pendingPlayTime !== undefined ? room.pendingPlayTime : (room.player?.time || 0);
+          room.player = {
+            paused: false,
+            time: startTime,
+            serverTime: Date.now(),
+            seq: room.seq,
+            authorId: 'SYSTEM',
+            authorName: 'System',
+          };
+          logServer(`[Room ${room.id}] 🍿 All ${totalUsers} viewers READY -> starting simultaneous playback at ${formatTime(startTime)}`);
+          broadcastAll(room, 'player.sync', room.player);
+          broadcastSystemMessage(room, `All viewers ready! Playing in sync 🍿`);
+        }
+        break;
+      }
+
+      // ── Client Buffering Pauses ──────────────────────────────────────────
+      case 'player.buffering': {
+        if (!room) break;
+        const { buffering } = payload;
+        if (buffering) {
+          logServer(`[Room ${room.id}] Client buffering mid-stream: ${user.name}`);
+          if (!room.player.paused && room.clients.size > 1) {
+            room.waitingToPlay = true;
+            room.pendingPlayTime = (room.player.time || 0) + Math.max(0, (Date.now() - (room.player.serverTime || Date.now())) / 1000);
+            room.seq = (room.seq || 0) + 1;
+            room.player = {
+              paused: true,
+              time: room.pendingPlayTime,
+              serverTime: Date.now(),
+              seq: room.seq,
+              authorId: userId,
+              authorName: user.name,
+            };
+            broadcastAll(room, 'player.sync', room.player);
+            broadcastSystemMessage(room, `Buffering for ${user.name}... paused`);
+          }
+          if (room.readiness) {
+            const entry = room.readiness.get(userId);
+            if (entry) entry.ready = false;
+          }
+          broadcastAll(room, 'room.readiness', {
+            readyCount: Array.from(room.readiness?.values() || []).filter(r => r.ready).length,
+            totalCount: room.clients.size,
+            waitingFor: [user.name],
+            allReady: false,
+          });
+        }
+        break;
+      }
+
+      // ── Host Force Play Override ─────────────────────────────────────────
+      case 'room.force_play': {
+        if (!room) break;
+        clearTimeout(room.readinessSafetyTimer);
+        room.waitingToPlay = false;
+        room.seq = (room.seq || 0) + 1;
+        room.player = {
+          paused: false,
+          time: room.player?.time || 0,
+          serverTime: Date.now(),
+          seq: room.seq,
+          authorId: userId,
+          authorName: user.name,
+        };
+        logServer(`[Room ${room.id}] Force play triggered by ${user.name}`);
+        broadcastAll(room, 'player.sync', room.player);
+        broadcastSystemMessage(room, `${user.name} started playback`);
         break;
       }
 
