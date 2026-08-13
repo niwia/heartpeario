@@ -14,8 +14,40 @@
           {{ room.roomId }}
           <span class="copy-icon">{{ copied ? '✓' : '⧉' }}</span>
         </button>
+
+        <!-- Current Media Title Badge -->
+        <div v-if="room.mediaMeta" class="media-title-chip" :title="room.mediaMeta.title">
+          <span class="media-chip-icon">🎬</span>
+          <span class="media-chip-text">{{ room.mediaMeta.title }}</span>
+          <span v-if="room.mediaMeta.episodeTitle" class="media-chip-ep">
+            {{ room.mediaMeta.episodeTitle }}
+          </span>
+        </div>
       </div>
 
+      <!-- Quick Action Buttons: Search & Addons -->
+      <div class="header-actions">
+        <button
+          id="hp-search-btn"
+          class="action-btn search-action"
+          title="Search Movies & Series"
+          @click="showSearchModal = true"
+        >
+          <span>🔍</span>
+          <span class="btn-label">Search</span>
+        </button>
+        <button
+          id="hp-addons-btn"
+          class="action-btn"
+          title="Manage Stremio Addons"
+          @click="showAddonsModal = true"
+        >
+          <span>🧩</span>
+          <span class="btn-label">Addons</span>
+        </button>
+      </div>
+
+      <!-- Users List -->
       <div class="users-row" role="list" aria-label="People in room">
         <div
           v-for="u in room.users"
@@ -69,8 +101,16 @@
         <div v-if="!room.url" class="placeholder">
           <div class="placeholder-inner">
             <span class="ph-icon">🎬</span>
-            <p class="ph-title">No video loaded yet</p>
-            <p class="ph-sub">Paste a direct video URL below to start watching.</p>
+            <p class="ph-title">No stream playing</p>
+            <p class="ph-sub">Search for a movie or show with Stremio addons, or paste a direct video link.</p>
+            <div class="placeholder-actions">
+              <button class="btn-ph-search" @click="showSearchModal = true">
+                🔍 Search Movies / Series
+              </button>
+              <button class="btn-ph-url" @click="openUrlBar">
+                🔗 Paste Video URL
+              </button>
+            </div>
           </div>
         </div>
 
@@ -79,13 +119,14 @@
           <div class="buf-spinner"></div>
         </div>
 
-        <!-- Video element -->
+        <!-- Video element with Subtitles Track -->
         <video
           v-show="room.url"
           ref="videoEl"
           :src="room.url || undefined"
           preload="metadata"
           playsinline
+          crossorigin="anonymous"
           @play="onPlay"
           @pause="onPause"
           @seeked="onSeeked"
@@ -95,9 +136,18 @@
           @canplay="onCanPlay"
           @error="onVideoError"
           @dblclick.stop="toggleFullscreen"
-        ></video>
+        >
+          <track
+            v-if="activeSubTrackBlobUrl"
+            kind="subtitles"
+            :src="activeSubTrackBlobUrl"
+            :srclang="room.currentSubtitle?.lang || 'en'"
+            :label="room.currentSubtitle?.lang || 'Subtitles'"
+            default
+          />
+        </video>
 
-        <!-- URL bar (visible only when no URL or host wants to change) -->
+        <!-- URL bar (visible only when manually requested) -->
         <div class="url-bar" v-show="showUrlBar">
           <input
             id="hp-url-input"
@@ -115,14 +165,15 @@
           <button v-if="room.url" class="btn-url-cancel" @click="showUrlBar = false">✕</button>
         </div>
 
-        <!-- Change URL button (host only, shows when URL is set) -->
-        <button
-          v-if="room.url && !showUrlBar"
-          id="hp-change-url"
-          class="change-url-btn"
-          title="Change video URL"
-          @click="openUrlBar"
-        >⟳ Change video</button>
+        <!-- Floating Quick Switch Buttons (Search / Direct Link) -->
+        <div v-if="room.url && !showUrlBar" class="floating-top-actions">
+          <button class="float-btn" @click="showSearchModal = true" title="Search another title">
+            🔍 Search
+          </button>
+          <button class="float-btn" @click="openUrlBar" title="Paste a direct URL">
+            ⟳ Direct Link
+          </button>
+        </div>
 
         <!-- Controls overlay -->
         <div class="controls" v-if="room.url">
@@ -157,6 +208,17 @@
 
             <!-- Duration -->
             <span class="time-display muted">{{ fmtTime(duration) }}</span>
+
+            <!-- Subtitles & Language button -->
+            <button
+              id="hp-subs-btn"
+              class="ctrl-btn sm sub-ctrl-btn"
+              :class="{ 'sub-active': !!room.currentSubtitle }"
+              :title="room.currentSubtitle ? `Subtitles: ${room.currentSubtitle.lang} (C)` : 'Subtitles / CC (C)'"
+              @click="showSubtitlesModal = true"
+            >
+              <span class="cc-badge">CC</span>
+            </button>
 
             <!-- Volume & Mute -->
             <div class="volume-wrap">
@@ -236,6 +298,29 @@
       </transition>
     </div>
 
+    <!-- ── Modals ────────────────────────────────────────────────── -->
+    <SearchMediaModal
+      v-if="showSearchModal"
+      @close="showSearchModal = false"
+      @selectStream="onStreamSelected"
+    />
+
+    <AddonManagerModal
+      v-if="showAddonsModal"
+      @close="showAddonsModal = false"
+    />
+
+    <SubtitlesModal
+      v-if="showSubtitlesModal"
+      :availableSubs="room.subtitles"
+      :currentSubtitle="room.currentSubtitle"
+      :offsetMs="room.subtitleOffsetMs"
+      @close="showSubtitlesModal = false"
+      @selectSubtitle="onSelectSubtitle"
+      @setOffset="onSetSubtitleOffset"
+      @loadCustomSubtitle="onLoadCustomSubtitle"
+    />
+
     <!-- Error toast -->
     <Transition name="toast">
       <div v-if="toast" class="toast" role="alert">{{ toast }}</div>
@@ -245,14 +330,25 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted, onUnmounted, computed } from 'vue';
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useRoomStore } from '@/stores/room';
 import socket from '@/services/socket';
+import { createVttUrlFromRemote, srtToVtt } from '@/services/subtitle.service';
+
+import SearchMediaModal from '@/components/SearchMediaModal.vue';
+import AddonManagerModal from '@/components/AddonManagerModal.vue';
+import SubtitlesModal from '@/components/SubtitlesModal.vue';
 
 const route = useRoute();
 const router = useRouter();
 const room = useRoomStore();
+
+// ── Modals ────────────────────────────────────────────────────────────────
+const showSearchModal = ref(false);
+const showAddonsModal = ref(false);
+const showSubtitlesModal = ref(false);
+const activeSubTrackBlobUrl = ref(null);
 
 // ── Refs ──────────────────────────────────────────────────────────────────
 const videoEl    = ref(null);
@@ -279,9 +375,8 @@ const toast      = ref('');
 const controlsHidden = ref(false);
 
 // ── Sync guard ────────────────────────────────────────────────────────────
-// Prevents echo: when we apply a remote sync, we don't want to broadcast back
 let suppressSync = false;
-let pendingSync  = null;   // applied on first canplay
+let pendingSync  = null;
 let hideTimer    = null;
 let toastTimer   = null;
 
@@ -321,6 +416,84 @@ watch(() => room.messages.length, () => {
   scrollMessages();
 });
 watch(chatOpen, open => { if (open) unread.value = 0; });
+
+// ── Subtitle Loading Logic ────────────────────────────────────────────────
+async function loadCurrentSubtitle() {
+  // Revoke old blob url
+  if (activeSubTrackBlobUrl.value) {
+    URL.revokeObjectURL(activeSubTrackBlobUrl.value);
+    activeSubTrackBlobUrl.value = null;
+  }
+
+  if (!room.currentSubtitle) return;
+
+  const url = room.currentSubtitle.url;
+  if (!url) return;
+
+  try {
+    const vttBlobUrl = await createVttUrlFromRemote(url, room.subtitleOffsetMs);
+    if (vttBlobUrl) {
+      activeSubTrackBlobUrl.value = vttBlobUrl;
+      nextTick(() => {
+        if (videoEl.value?.textTracks?.[0]) {
+          videoEl.value.textTracks[0].mode = 'showing';
+        }
+      });
+    }
+  } catch (err) {
+    console.error('Failed to load subtitle track:', err);
+  }
+}
+
+function onSelectSubtitle(sub) {
+  room.currentSubtitle = sub;
+  loadCurrentSubtitle();
+  doToast(sub ? `Subtitles: ${sub.lang?.toUpperCase()}` : 'Subtitles disabled');
+}
+
+function onSetSubtitleOffset(offsetMs) {
+  room.subtitleOffsetMs = offsetMs;
+  loadCurrentSubtitle();
+  doToast(`Subtitle offset: ${offsetMs >= 0 ? '+' : ''}${(offsetMs / 1000).toFixed(1)}s`);
+}
+
+function onLoadCustomSubtitle({ name, content }) {
+  if (activeSubTrackBlobUrl.value) {
+    URL.revokeObjectURL(activeSubTrackBlobUrl.value);
+  }
+  const vtt = srtToVtt(content, room.subtitleOffsetMs);
+  const blob = new Blob([vtt], { type: 'text/vtt;charset=utf-8' });
+  activeSubTrackBlobUrl.value = URL.createObjectURL(blob);
+  room.currentSubtitle = { id: 'custom', lang: 'Custom', url: null };
+  nextTick(() => {
+    if (videoEl.value?.textTracks?.[0]) {
+      videoEl.value.textTracks[0].mode = 'showing';
+    }
+  });
+  showSubtitlesModal.value = false;
+  doToast(`Loaded custom subtitle: ${name}`);
+}
+
+// ── Stream Selected from Search / Addons ──────────────────────────────────
+function onStreamSelected({ url, mediaMeta, subtitles }) {
+  room.mediaMeta = mediaMeta;
+  room.subtitles = subtitles || [];
+
+  // Broadcast to room
+  socket.send('player.url', {
+    url,
+    mediaMeta,
+    subtitles,
+  });
+
+  // Pick first english subtitle or first available
+  const defaultSub = (subtitles || []).find(s => ['eng', 'en'].includes(s.lang?.toLowerCase())) || (subtitles || [])[0] || null;
+  room.currentSubtitle = defaultSub;
+  loadCurrentSubtitle();
+
+  showUrlBar.value = false;
+  doToast(`Playing ${mediaMeta.title} for everyone! 🍿`);
+}
 
 // ── Controls visibility ───────────────────────────────────────────────────
 function showControls() {
@@ -362,7 +535,14 @@ function openUrlBar() {
 function loadUrl() {
   const url = urlInput.value.trim();
   if (!url) return;
-  socket.send('player.url', { url });
+  room.mediaMeta = null;
+  room.subtitles = [];
+  room.currentSubtitle = null;
+  if (activeSubTrackBlobUrl.value) {
+    URL.revokeObjectURL(activeSubTrackBlobUrl.value);
+    activeSubTrackBlobUrl.value = null;
+  }
+  socket.send('player.url', { url, mediaMeta: null, subtitles: [] });
   urlInput.value = '';
   showUrlBar.value = false;
 }
@@ -403,7 +583,6 @@ function onSeekEnd(e) {
   seeking.value = false;
   if (videoEl.value) {
     videoEl.value.currentTime = parseFloat(e.target.value);
-    // 'seeked' event will broadcast sync
   }
 }
 
@@ -459,7 +638,7 @@ function onCanPlay() {
 }
 
 function onVideoError() {
-  doToast('⚠️ Could not load video — check the URL.', 5000);
+  doToast('⚠️ Could not load video — check the URL or addon stream source.', 5000);
   buffering.value = false;
 }
 
@@ -482,11 +661,15 @@ function applySync({ paused: p, time, serverTime }) {
 
 // ── Keyboard shortcuts ────────────────────────────────────────────────────
 function onKeyDown(e) {
-  // Ignore when typing in inputs
+  // Ignore when typing in inputs or modal open
   if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  if (showSearchModal.value || showAddonsModal.value || showSubtitlesModal.value) return;
+
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   if (e.code === 'KeyF') toggleFullscreen();
   if (e.code === 'KeyM') toggleMute();
+  if (e.code === 'KeyC') showSubtitlesModal.value = !showSubtitlesModal.value;
+  if (e.code === 'KeyS') showSearchModal.value = true;
 }
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -495,16 +678,10 @@ onMounted(() => {
 
   document.addEventListener('keydown', onKeyDown);
 
-  // Show URL bar immediately if no URL yet
-  showUrlBar.value = !room.url && room.isHost;
-  if (!room.url && !room.isHost) showUrlBar.value = false;
-
-  // If the page was loaded directly (not navigated from Home), join the room
   if (!room.roomId) {
     socket.onReconnect = () => socket.send('room.join', { roomId });
     socket.send('room.join', { roomId });
   } else {
-    // Already joined via Home — just set up reconnect handler
     socket.onReconnect = () => {
       socket.send('room.join', { roomId });
     };
@@ -518,15 +695,19 @@ onMounted(() => {
         you: data.you,
         users: data.users,
         url: data.url,
+        mediaMeta: data.mediaMeta || null,
+        subtitles: data.subtitles || [],
         player: data.player,
       });
 
-      // If there's already a URL, queue up the player state to apply on canplay
       if (data.url && data.player) {
         pendingSync = data.player;
       }
-
-      showUrlBar.value = !data.url;
+      if (data.subtitles?.length && !room.currentSubtitle) {
+        const defaultSub = data.subtitles.find(s => ['eng', 'en'].includes(s.lang?.toLowerCase())) || data.subtitles[0];
+        room.currentSubtitle = defaultSub;
+        loadCurrentSubtitle();
+      }
     }),
 
     socket.on('room.users', ({ users }) => {
@@ -537,15 +718,29 @@ onMounted(() => {
       room.isHost = room.you?.id === hostId;
     }),
 
-    socket.on('player.url', ({ url }) => {
-      room.url = url;
+    socket.on('player.url', (data) => {
+      room.url = data.url;
+      room.mediaMeta = data.mediaMeta || null;
+      room.subtitles = data.subtitles || [];
       room.player = { paused: true, time: 0, serverTime: Date.now() };
       paused.value = true;
       currentTime.value = 0;
       duration.value = 0;
       showUrlBar.value = false;
-      // Reset pending and let canplay handle initial state
       pendingSync = null;
+
+      // Auto-load subtitle
+      if (data.subtitles?.length) {
+        const defaultSub = data.subtitles.find(s => ['eng', 'en'].includes(s.lang?.toLowerCase())) || data.subtitles[0];
+        room.currentSubtitle = defaultSub;
+        loadCurrentSubtitle();
+      } else {
+        room.currentSubtitle = null;
+        if (activeSubTrackBlobUrl.value) {
+          URL.revokeObjectURL(activeSubTrackBlobUrl.value);
+          activeSubTrackBlobUrl.value = null;
+        }
+      }
     }),
 
     socket.on('player.sync', (data) => {
@@ -572,6 +767,9 @@ onMounted(() => {
     document.removeEventListener('keydown', onKeyDown);
     clearTimeout(hideTimer);
     clearTimeout(toastTimer);
+    if (activeSubTrackBlobUrl.value) {
+      URL.revokeObjectURL(activeSubTrackBlobUrl.value);
+    }
     socket.onReconnect = null;
     room.reset();
   });
@@ -597,7 +795,7 @@ onMounted(() => {
 /* ── Header ────────────────────────────────────────────────────────────── */
 .header {
   flex-shrink: 0;
-  height: 50px;
+  height: 52px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -637,6 +835,67 @@ onMounted(() => {
 }
 .room-code:hover { border-color: var(--accent); }
 .copy-icon { font-size: 0.75rem; color: var(--muted); }
+
+/* Media Title Chip */
+.media-title-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  max-width: 220px;
+  overflow: hidden;
+}
+.media-chip-icon { font-size: 0.85rem; }
+.media-chip-text {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.media-chip-ep {
+  color: var(--gold);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+/* Header Actions */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+}
+.action-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.search-action {
+  background: rgba(224, 61, 90, 0.12);
+  border-color: rgba(224, 61, 90, 0.4);
+  color: #fff;
+}
+.search-action:hover {
+  background: var(--accent);
+}
 
 .users-row {
   display: flex;
@@ -759,14 +1018,45 @@ video {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   text-align: center;
-  max-width: 320px;
+  max-width: 380px;
   animation: fade-in 0.4s ease both;
 }
-.ph-icon { font-size: 3rem; }
-.ph-title { font-size: 1.1rem; font-weight: 600; }
-.ph-sub { color: var(--muted); font-size: 0.88rem; line-height: 1.6; }
+.ph-icon { font-size: 3.2rem; }
+.ph-title { font-size: 1.25rem; font-weight: 700; color: var(--text); }
+.ph-sub { color: var(--muted); font-size: 0.9rem; line-height: 1.5; }
+
+.placeholder-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.btn-ph-search {
+  padding: 10px 18px;
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  transition: filter 0.15s;
+}
+.btn-ph-search:hover { filter: brightness(1.15); }
+
+.btn-ph-url {
+  padding: 10px 16px;
+  background: var(--surface2);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  transition: all 0.15s;
+}
+.btn-ph-url:hover { border-color: var(--accent); background: var(--accent-dim); }
 
 /* Buffering */
 .buffering-overlay {
@@ -785,6 +1075,30 @@ video {
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
+
+/* Floating top actions */
+.floating-top-actions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  z-index: 5;
+}
+
+.float-btn {
+  padding: 5px 12px;
+  background: rgba(19,19,24,0.85);
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: color 0.15s, border-color 0.15s;
+}
+.float-btn:hover { color: var(--text); border-color: var(--accent); }
 
 /* URL bar */
 .url-bar {
@@ -831,24 +1145,6 @@ video {
 }
 .btn-url-cancel:hover { color: var(--text); }
 
-/* Change URL button */
-.change-url-btn {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  padding: 5px 12px;
-  background: rgba(19,19,24,0.8);
-  border: 1px solid var(--border-light);
-  border-radius: 999px;
-  font-size: 0.78rem;
-  color: var(--muted);
-  cursor: pointer;
-  backdrop-filter: blur(4px);
-  transition: color 0.15s, border-color 0.15s;
-  z-index: 5;
-}
-.change-url-btn:hover { color: var(--text); border-color: var(--accent); }
-
 /* Player controls */
 .controls {
   position: absolute;
@@ -878,6 +1174,23 @@ video {
 }
 .ctrl-btn:hover { background: rgba(255,255,255,0.12); }
 .play-btn { font-size: 1.15rem; }
+
+.sub-ctrl-btn {
+  width: 34px;
+  height: 34px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+}
+.cc-badge {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+.sub-ctrl-btn.sub-active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
 .time-display {
   font-size: 0.8rem;
@@ -1036,12 +1349,14 @@ video {
 }
 
 /* ── Mobile ─────────────────────────────────────────────────────────────── */
-@media (max-width: 640px) {
+@media (max-width: 768px) {
   .main { flex-direction: column; }
   .player-wrap { min-height: 40vh; }
   .sidebar { width: 100%; flex: 1; border-left: none; border-top: 1px solid var(--border); }
   .user-name { display: none; }
+  .btn-label { display: none; }
   .volume-bar { display: none; }
   .url-bar { bottom: 68px; }
+  .media-title-chip { display: none; }
 }
 </style>

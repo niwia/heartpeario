@@ -58,6 +58,8 @@ wss.on('connection', (ws) => {
           id,
           hostId: userId,
           url: null,
+          mediaMeta: null,
+          subtitles: [],
           player: { paused: true, time: 0, serverTime: Date.now() },
           clients: new Map([[ws, user]]),
         };
@@ -68,6 +70,8 @@ wss.on('connection', (ws) => {
           you: user,
           users: roomUsers(room),
           url: null,
+          mediaMeta: null,
+          subtitles: [],
           player: room.player,
         });
         break;
@@ -86,6 +90,8 @@ wss.on('connection', (ws) => {
           you: user,
           users: roomUsers(room),
           url: room.url,
+          mediaMeta: room.mediaMeta || null,
+          subtitles: room.subtitles || [],
           player: { ...room.player, serverTime: Date.now() },
         });
         broadcast(room, 'room.users', { users: roomUsers(room) }, ws);
@@ -109,9 +115,15 @@ wss.on('connection', (ws) => {
         if (!room) break;
         const url = (payload.url || '').trim();
         room.url = url || null;
+        room.mediaMeta = payload.mediaMeta || null;
+        room.subtitles = Array.isArray(payload.subtitles) ? payload.subtitles : [];
         // reset player state when URL changes
         room.player = { paused: true, time: 0, serverTime: Date.now() };
-        broadcastAll(room, 'player.url', { url: room.url });
+        broadcastAll(room, 'player.url', {
+          url: room.url,
+          mediaMeta: room.mediaMeta,
+          subtitles: room.subtitles,
+        });
         break;
       }
 
