@@ -280,15 +280,25 @@ wss.on('connection', (ws, req) => {
       case 'player.sync': {
         if (!room) break;
         const { paused, time } = payload;
-        const prevPaused = room.player.paused;
-        const prevTime = room.player.time || 0;
+        const now = Date.now();
+        const prevPaused = room.player?.paused;
+        const prevTime = room.player?.time || 0;
         const newTime = Math.max(0, parseFloat(time) || 0);
+
+        // Safety backstop: Suppress identical echo within 350ms of last broadcast
+        if (room.player &&
+            room.player.paused === !!paused &&
+            Math.abs(prevTime - newTime) < 0.5 &&
+            now - room.player.serverTime < 350) {
+          logServer(`[Room ${room.id}] Echo sync suppressed from ${user.name}`);
+          break;
+        }
 
         room.seq = (room.seq || 0) + 1;
         room.player = {
           paused: !!paused,
           time: newTime,
-          serverTime: Date.now(),
+          serverTime: now,
           seq: room.seq,
           authorId: userId,
           authorName: user.name,

@@ -830,9 +830,9 @@ function onVideoError() {
 async function applySync(data) {
   if (!videoEl.value || !data) return;
 
-  // Discard older out-of-order packets if sequence tracking is present
-  if (data.seq && lastAppliedSeq && data.seq < lastAppliedSeq) {
-    logDebug(`Discarding stale sync #${data.seq} (current: #${lastAppliedSeq})`);
+  // Discard older out-of-order or duplicate packets
+  if (data.seq && lastAppliedSeq && data.seq <= lastAppliedSeq) {
+    logDebug(`Discarding stale/duplicate sync #${data.seq} (current: #${lastAppliedSeq})`);
     return;
   }
   if (data.seq) lastAppliedSeq = data.seq;
