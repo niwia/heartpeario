@@ -1,0 +1,13 @@
+{
+  "name": "heartpeario-server",
+  "version": "1.0.0",
+  "description": "HeartPeario WebSocket sync server",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
