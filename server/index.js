@@ -284,10 +284,19 @@ wss.on('connection', (ws, req) => {
         const prevTime = room.player.time || 0;
         const newTime = Math.max(0, parseFloat(time) || 0);
 
-        room.player = { paused: !!paused, time: newTime, serverTime: Date.now() };
-        logServer(`[Room ${room.id}] Sync from ${user.name}: ${paused ? 'PAUSE' : 'PLAY'} at ${formatTime(newTime)}`);
+        room.seq = (room.seq || 0) + 1;
+        room.player = {
+          paused: !!paused,
+          time: newTime,
+          serverTime: Date.now(),
+          seq: room.seq,
+          authorId: userId,
+          authorName: user.name,
+        };
 
-        // Relay to everyone else with server timestamp
+        logServer(`[Room ${room.id}] Sync #${room.seq} from ${user.name}: ${paused ? 'PAUSE' : 'PLAY'} at ${formatTime(newTime)}`);
+
+        // Relay to everyone else with server timestamp and seq
         broadcast(room, 'player.sync', room.player, ws);
 
         // Chat log

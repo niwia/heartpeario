@@ -1,37 +1,43 @@
 <template>
-  <div class="room-page">
+  <div class="room">
 
-    <!-- ── Room Not Found Overlay ────────────────────────────────── -->
-    <div v-if="roomNotFound" class="join-overlay">
-      <div class="join-card">
-        <div class="join-badge" style="background: rgba(224,61,90,0.2); color: var(--accent);">NOT FOUND</div>
+    <!-- ── 404 Room Not Found Overlay ────────────────────────────────── -->
+    <div v-if="roomNotFound" class="room-not-found-overlay">
+      <div class="not-found-card">
+        <div class="nf-icon-wrap">
+          <Icon name="stop" size="36" />
+        </div>
         <h2>Room Not Found</h2>
-        <p class="join-sub">
-          Room <strong>{{ roomNotFoundCode }}</strong> does not exist or all viewers have left.
+        <p class="nf-desc">
+          Room <code>{{ roomNotFoundCode }}</code> doesn't exist or expired because all users left.
         </p>
-        <router-link to="/" class="btn-join-room" style="text-decoration: none; text-align: center; margin-top: 8px;">
-          Return Home &amp; Create Room
-        </router-link>
+        <div class="nf-actions">
+          <router-link to="/" class="btn-return-home">
+            Return Home &amp; Create Room
+          </router-link>
+        </div>
       </div>
     </div>
 
-    <!-- ── Join Room Prompt (for direct link invites) ────────────────── -->
+    <!-- ── Join Room Prompt ─────────────────────────────────────────── -->
     <div v-if="showJoinPrompt && !roomNotFound" class="join-overlay">
       <div class="join-card">
-        <div class="join-badge">Room {{ cleanRouteCode }}</div>
-        <h2>Welcome to HeartPeario</h2>
-        <p class="join-sub">Choose a display name so your friends know who you are in the room.</p>
+        <div class="join-badge">
+          <span>ROOM: {{ cleanRouteCode }}</span>
+        </div>
+        <h2>Join Watch Party</h2>
+        <p class="join-sub">Choose your display name for this session.</p>
         <form class="join-form" @submit.prevent="confirmJoinName">
           <input
             ref="joinNameInputEl"
             v-model="joinNameInput"
             type="text"
-            placeholder="Enter your name (e.g. Alex, Sam)…"
+            placeholder="Your name…"
             maxlength="25"
             autofocus
           />
           <button type="submit" class="btn-join-room" :disabled="!joinNameInput.trim()">
-            Join Watch Party
+            Join Watch Party →
           </button>
         </form>
       </div>
@@ -105,15 +111,15 @@
           </div>
         </div>
 
-        <!-- You / Rename Button -->
+        <!-- Encrypted Profile & History Vault Button -->
         <button
-          v-if="room.you"
-          class="user-chip-btn"
-          @click="openRenameModal"
-          title="Click to change your display name"
+          class="user-chip-btn profile-vault-btn"
+          @click="showProfileModal = true"
+          title="Encrypted Profile, Watch History & Buddies"
         >
-          <span class="user-color-dot" :style="{ background: room.you.color }"></span>
-          <span class="user-chip-name">{{ room.you.name }}</span>
+          <span class="user-color-dot" :style="{ background: profileStore.current.avatarColor }"></span>
+          <span class="user-chip-name">{{ profileStore.current.name }}</span>
+          <span class="vault-mini-tag">🔒 Vault</span>
         </button>
 
         <!-- Toggle Chat -->
@@ -169,7 +175,7 @@
           <div class="buf-spinner"></div>
         </div>
 
-        <!-- Video element with Subtitles Track -->
+        <!-- Video element with Subtitles Track for Web & Native iOS/Android Players -->
         <video
           v-show="room.url"
           ref="videoEl"
@@ -226,19 +232,7 @@
           </form>
         </div>
 
-        <!-- Floating Quick Action buttons on video hover -->
-        <div class="player-floating-actions" v-if="room.url && !controlsHidden">
-          <button class="float-btn" @click="showSearchModal = true" title="Search another title">
-            <Icon name="search" size="14" />
-            <span>Search</span>
-          </button>
-          <button class="float-btn" @click="openUrlBar" title="Paste a direct URL">
-            <Icon name="link" size="14" />
-            <span>Direct Link</span>
-          </button>
-        </div>
-
-        <!-- Media Info Top Overlay -->
+        <!-- Media Info Top Overlay (shown on hover) -->
         <div v-if="room.mediaMeta && !controlsHidden && room.url" class="media-title-overlay">
           <span class="m-title">{{ room.mediaMeta.title }}</span>
           <span v-if="room.mediaMeta.episodeTitle" class="m-ep">{{ room.mediaMeta.episodeTitle }}</span>
@@ -248,181 +242,192 @@
         <!-- Controls overlay -->
         <div class="controls" v-if="room.url">
           <div class="controls-inner">
-            <!-- Play / Pause -->
-            <button
-              id="hp-play-pause"
-              class="ctrl-btn play-btn"
-              :title="paused ? 'Play (Space)' : 'Pause (Space)'"
-              @click="togglePlay"
-            >
-              <Icon :name="paused ? 'play' : 'pause'" size="20" />
-            </button>
 
-            <!-- Time -->
-            <span class="time-display">{{ fmtTime(currentTime) }}</span>
-
-            <!-- Seek bar -->
-            <input
-              id="hp-seekbar"
-              class="seek-bar"
-              type="range"
-              min="0"
-              :max="duration || 100"
-              step="0.25"
-              :value="currentTime"
-              @input="onSeekInput"
-              @mousedown="isUserScrubbing = true"
-              @mouseup="onSeekEnd"
-              @change="onSeekEnd"
-            />
-
-            <!-- Duration -->
-            <span class="time-display muted">{{ fmtTime(duration) }}</span>
-
-            <!-- Subtitles & Language button -->
-            <button
-              id="hp-subs-btn"
-              class="ctrl-btn sm sub-ctrl-btn"
-              :class="{ 'sub-active': !!room.currentSubtitle }"
-              :title="room.currentSubtitle ? `Subtitles: ${room.currentSubtitle.lang} (C)` : 'Subtitles / CC (C)'"
-              @click="showSubtitlesModal = true"
-            >
-              <Icon name="subtitles" size="18" />
-            </button>
-
-            <!-- Volume & Mute -->
-            <div class="volume-wrap">
-              <button
-                id="hp-mute-btn"
-                class="ctrl-btn sm"
-                :title="isMuted || volume === 0 ? 'Unmute (M)' : 'Mute (M)'"
-                @click="toggleMute"
-              >
-                <Icon :name="isMuted || volume === 0 ? 'mute' : 'volume'" size="18" />
-              </button>
+            <!-- Progress bar -->
+            <div class="scrub-bar-wrap">
               <input
-                id="hp-volume"
-                class="volume-bar"
                 type="range"
+                class="scrub-bar"
                 min="0"
-                max="1"
-                step="0.05"
-                v-model.number="volume"
-                title="Volume"
+                :max="duration || 100"
+                step="0.1"
+                :value="currentTime"
+                @input="onSeekInput"
+                @change="onSeekEnd"
+                @mousedown="isUserScrubbing = true"
+                @touchstart="isUserScrubbing = true"
+                aria-label="Seek video"
               />
+              <div
+                class="scrub-progress"
+                :style="{ width: duration > 0 ? (currentTime / duration) * 100 + '%' : '0%' }"
+              ></div>
             </div>
 
-            <!-- AirPlay button (Apple Safari / iOS) -->
-            <button
-              v-if="airplayAvailable"
-              id="hp-airplay-btn"
-              class="ctrl-btn sm sub-ctrl-btn"
-              title="Stream to TV via Apple AirPlay"
-              @click="triggerAirPlay"
-            >
-              <Icon name="airplay" size="18" />
-            </button>
+            <!-- Buttons row -->
+            <div class="controls-row">
+              <div class="controls-left">
+                <!-- Play / Pause -->
+                <button class="ctrl-btn" @click="togglePlay" :title="paused ? 'Play (Space)' : 'Pause (Space)'">
+                  <Icon :name="paused ? 'play' : 'pause'" size="20" />
+                </button>
 
-            <!-- Google Cast / Chromecast button -->
-            <button
-              id="hp-cast-btn"
-              class="ctrl-btn sm sub-ctrl-btn"
-              :class="{ 'sub-active': isCasting }"
-              :title="isCasting ? 'Connected to TV (Chromecast)' : 'Cast to TV Screen (Chromecast)'"
-              @click="triggerChromecast"
-            >
-              <Icon name="cast" size="18" />
-            </button>
+                <!-- Backward 10s -->
+                <button class="ctrl-btn" @click="skip(-10)" title="Rewind 10s">
+                  <Icon name="backward" size="18" />
+                </button>
 
-            <!-- Fullscreen -->
-            <button
-              id="hp-fullscreen"
-              class="ctrl-btn"
-              title="Fullscreen (F)"
-              @click="toggleFullscreen"
-            >
-              <Icon name="fullscreen" size="18" />
-            </button>
-          </div>
-        </div>
-      </div>
+                <!-- Forward 10s -->
+                <button class="ctrl-btn" @click="skip(10)" title="Forward 10s">
+                  <Icon name="fastfw" size="18" />
+                </button>
 
-      <!-- ── Chat sidebar ────────────────────────────────────────── -->
-      <transition name="fade">
-        <aside class="sidebar" v-if="chatOpen">
+                <!-- Volume / Mute -->
+                <div class="vol-wrap">
+                  <button class="ctrl-btn" @click="toggleMute" :title="isMuted ? 'Unmute (M)' : 'Mute (M)'">
+                    <Icon :name="isMuted || volume === 0 ? 'mute' : (volume > 0.5 ? 'vol-high' : 'vol-low')" size="18" />
+                  </button>
+                  <input
+                    type="range"
+                    class="vol-slider"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    v-model.number="volume"
+                    aria-label="Volume"
+                  />
+                </div>
 
-          <div class="sidebar-header">
-            <span>Room Chat</span>
-            <button class="icon-btn sm" @click="chatOpen = false" title="Close">
-              <Icon name="close" size="14" />
-            </button>
-          </div>
-
-          <!-- Messages -->
-          <div class="messages" ref="messagesEl">
-            <div v-if="room.messages.length === 0" class="chat-empty">
-              <p>No messages yet.</p>
-              <p class="chat-empty-sub">Play/pause actions and chat messages will appear here in real-time.</p>
-            </div>
-
-            <div
-              v-for="(msg, i) in room.messages"
-              :key="i"
-              class="msg"
-              :class="{
-                mine: msg.userId === room.you?.id && !msg.isSystem,
-                'system-msg': msg.isSystem,
-              }"
-            >
-              <!-- System event message -->
-              <div v-if="msg.isSystem" class="system-msg-inner">
-                <span class="msg-ts">[{{ fmtTimestamp(msg.ts) }}]</span>
-                <span class="system-text">{{ msg.content }}</span>
+                <!-- Time display -->
+                <div class="time-display">
+                  <span>{{ fmtTime(currentTime) }}</span>
+                  <span class="time-sep">/</span>
+                  <span>{{ fmtTime(duration) }}</span>
+                </div>
               </div>
 
-              <!-- Standard user chat message -->
-              <template v-else>
-                <div class="msg-meta">
-                  <span class="msg-author" :style="{ color: msg.color }">{{ msg.name }}</span>
-                  <span class="msg-ts">{{ fmtTimestamp(msg.ts) }}</span>
-                </div>
-                <div class="msg-body">{{ msg.content }}</div>
-              </template>
+              <div class="controls-right">
+                <!-- Subtitles Button -->
+                <button
+                  class="ctrl-btn"
+                  :class="{ active: !!room.currentSubtitle }"
+                  @click="showSubtitlesModal = true"
+                  title="Subtitles & Language (C)"
+                >
+                  <Icon name="subtitles" size="18" />
+                  <span v-if="room.currentSubtitle" class="sub-label">
+                    {{ room.currentSubtitle.lang?.slice(0, 3).toUpperCase() }}
+                  </span>
+                </button>
+
+                <!-- AirPlay -->
+                <button
+                  v-if="airplayAvailable"
+                  class="ctrl-btn"
+                  @click="triggerAirPlay"
+                  title="Stream with Apple AirPlay"
+                >
+                  <Icon name="airplay" size="18" />
+                </button>
+
+                <!-- Google Cast (Chromecast) -->
+                <button
+                  class="ctrl-btn"
+                  :class="{ active: isCasting }"
+                  @click="triggerChromecast"
+                  title="Stream to TV with Chromecast"
+                >
+                  <Icon name="cast" size="18" />
+                </button>
+
+                <!-- Fullscreen -->
+                <button class="ctrl-btn" @click="toggleFullscreen" title="Fullscreen (F)">
+                  <Icon name="fullscreen" size="18" />
+                </button>
+              </div>
             </div>
+
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ── Chat Sidebar ─────────────────────────────────────────── -->
+      <aside class="chat-sidebar" :class="{ open: chatOpen }">
+        <div class="chat-header">
+          <div class="chat-title">
+            <Icon name="chat" size="15" />
+            <span>Room Chat</span>
+          </div>
+          <button class="icon-btn sm" @click="chatOpen = false" title="Close Chat">
+            <Icon name="close" size="14" />
+          </button>
+        </div>
+
+        <!-- Message List -->
+        <div ref="messagesEl" class="chat-messages">
+          <div v-if="room.messages.length === 0" class="chat-empty">
+            <Icon name="chat" size="24" />
+            <p>Welcome! Messages and sync events appear here.</p>
           </div>
 
-          <!-- Input -->
-          <form class="chat-form" @submit.prevent="sendMessage">
-            <input
-              id="hp-chat-input"
-              v-model="chatInput"
-              type="text"
-              placeholder="Send message to room…"
-              maxlength="300"
-              autocomplete="off"
-            />
-            <button type="submit" class="btn-send" :disabled="!chatInput.trim()" title="Send">
-              <Icon name="send" size="16" />
-            </button>
-          </form>
+          <div
+            v-for="(msg, i) in room.messages"
+            :key="i"
+            class="chat-msg"
+            :class="{
+              'system-msg': msg.isSystem,
+              'self-msg': !msg.isSystem && msg.userId === room.you?.id,
+            }"
+          >
+            <!-- System message -->
+            <template v-if="msg.isSystem">
+              <span class="sys-time">[{{ fmtTimestamp(msg.ts) }}]</span>
+              <span class="sys-text">{{ msg.content }}</span>
+            </template>
 
-        </aside>
-      </transition>
+            <!-- User message -->
+            <template v-else>
+              <div class="msg-header">
+                <span class="msg-author" :style="{ color: msg.color }">{{ msg.name }}</span>
+                <span class="msg-time">{{ fmtTimestamp(msg.ts) }}</span>
+              </div>
+              <div class="msg-content">{{ msg.content }}</div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Chat Input -->
+        <form class="chat-footer" @submit.prevent="sendMessage">
+          <input
+            v-model="chatInput"
+            type="text"
+            placeholder="Type a message…"
+            maxlength="300"
+            autocomplete="off"
+          />
+          <button type="submit" class="btn-send" :disabled="!chatInput.trim()" title="Send">
+            <Icon name="send" size="16" />
+          </button>
+        </form>
+      </aside>
 
     </div>
 
-    <!-- ── Modals ────────────────────────────────────────────────── -->
+    <!-- ── Stremio Catalog Search Modal ─────────────────────────────── -->
     <SearchMediaModal
       v-if="showSearchModal"
       @close="showSearchModal = false"
       @selectStream="onStreamSelected"
     />
 
+    <!-- ── Addon Manager Modal ──────────────────────────────────────── -->
     <AddonManagerModal
       v-if="showAddonsModal"
       @close="showAddonsModal = false"
     />
 
+    <!-- ── Subtitles & Audio Modal ──────────────────────────────────── -->
     <SubtitlesModal
       v-if="showSubtitlesModal"
       :availableSubs="room.subtitles"
@@ -432,6 +437,13 @@
       @selectSubtitle="onSelectSubtitle"
       @setOffset="onSetSubtitleOffset"
       @loadCustomSubtitle="onLoadCustomSubtitle"
+    />
+
+    <!-- ── Encrypted Profile & Watch History Modal ───────────────────── -->
+    <ProfileModal
+      v-if="showProfileModal"
+      @close="showProfileModal = false"
+      @selectStream="onStreamSelected"
     />
 
     <!-- Error toast -->
@@ -446,6 +458,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useRoomStore } from '@/stores/room';
+import { useProfileStore } from '@/stores/profile';
 import socket from '@/services/socket';
 import { createVttUrlFromRemote, srtToVtt } from '@/services/subtitle.service';
 import castService from '@/services/cast.service';
@@ -454,15 +467,18 @@ import Icon from '@/components/Icon.vue';
 import SearchMediaModal from '@/components/SearchMediaModal.vue';
 import AddonManagerModal from '@/components/AddonManagerModal.vue';
 import SubtitlesModal from '@/components/SubtitlesModal.vue';
+import ProfileModal from '@/components/ProfileModal.vue';
 
 const route = useRoute();
 const router = useRouter();
 const room = useRoomStore();
+const profileStore = useProfileStore();
 
 // ── Modals & Casting ──────────────────────────────────────────────────────
 const showSearchModal = ref(false);
 const showAddonsModal = ref(false);
 const showSubtitlesModal = ref(false);
+const showProfileModal = ref(false);
 const showJoinPrompt = ref(false);
 const showRenameModal = ref(false);
 const joinNameInput = ref('');
@@ -504,10 +520,12 @@ const copied     = ref(false);
 const toast      = ref('');
 const controlsHidden = ref(false);
 
-// ── Sync Engine Guard ─────────────────────────────────────────────────────
+// ── Sync Engine State ─────────────────────────────────────────────────────
 let isApplyingRemoteSync = false;
 let remoteSyncTimer = null;
 let pendingSync = null;
+let lastAppliedSeq = 0;
+let currentPlayPromise = null;
 let hideTimer = null;
 let toastTimer = null;
 let seekDebounceTimer = null;
@@ -515,6 +533,30 @@ let seekDebounceTimer = null;
 function logDebug(...args) {
   const ts = new Date().toTimeString().split(' ')[0];
   console.log(`[HeartPeario ${ts}]`, ...args);
+}
+
+// ── Promise-Guarded Play & Pause ──────────────────────────────────────────
+async function safePlay() {
+  if (!videoEl.value) return;
+  needsUserTapToPlay.value = false;
+  try {
+    currentPlayPromise = videoEl.value.play();
+    await currentPlayPromise;
+  } catch (err) {
+    if (err.name === 'NotAllowedError') {
+      needsUserTapToPlay.value = true;
+    }
+  } finally {
+    currentPlayPromise = null;
+  }
+}
+
+async function safePause() {
+  if (!videoEl.value) return;
+  if (currentPlayPromise) {
+    try { await currentPlayPromise; } catch {}
+  }
+  videoEl.value.pause();
 }
 
 // ── Subtitle Management ───────────────────────────────────────────────────
@@ -569,6 +611,7 @@ function onStreamSelected({ url, mediaMeta, subtitles }) {
   room.mediaMeta = mediaMeta;
   room.subtitles = subtitles || [];
   room.currentSubtitle = null;
+  lastAppliedSeq = 0;
   if (activeSubTrackBlobUrl.value) {
     URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = null;
@@ -580,6 +623,20 @@ function onStreamSelected({ url, mediaMeta, subtitles }) {
     const defaultSub = subtitles.find(s => ['eng', 'en'].includes(s.lang?.toLowerCase())) || subtitles[0];
     room.currentSubtitle = defaultSub;
     loadCurrentSubtitle();
+  }
+
+  // Record to Encrypted Profile Watch History
+  if (url && mediaMeta) {
+    profileStore.recordWatch({
+      id: mediaMeta.id,
+      title: mediaMeta.title,
+      episodeTitle: mediaMeta.episodeTitle,
+      year: mediaMeta.year,
+      poster: mediaMeta.poster,
+      url,
+      progressSeconds: 0,
+      durationSeconds: 0,
+    });
   }
 
   doToast(`Loaded: ${mediaMeta.title}`);
@@ -604,6 +661,7 @@ function setDirectUrl() {
   room.mediaMeta = null;
   room.subtitles = [];
   room.currentSubtitle = null;
+  lastAppliedSeq = 0;
   if (activeSubTrackBlobUrl.value) {
     URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = null;
@@ -611,53 +669,38 @@ function setDirectUrl() {
   socket.send('player.url', { url, mediaMeta: null, subtitles: [] });
   urlInput.value = '';
   showUrlBar.value = false;
-  doToast('Loaded direct video link');
 }
 
-// ── Chat & Scroll ─────────────────────────────────────────────────────────
-function scrollMessages() {
-  nextTick(() => {
-    if (messagesEl.value) {
-      messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
-    }
-  });
-}
-
-function sendMessage() {
-  const content = chatInput.value.trim();
-  if (!content) return;
-  socket.send('room.message', { content });
-  chatInput.value = '';
-}
-
-// ── Chromecast & AirPlay Handlers ─────────────────────────────────────────
-async function triggerChromecast() {
-  if (!room.url) {
-    doToast('Load a video first before casting to TV');
-    return;
-  }
-  try {
-    await castService.requestChromecast(room.url, room.mediaMeta, currentTime.value, paused.value);
-    doToast('Connected to Chromecast');
-  } catch (err) {
-    if (err?.message) doToast(err.message);
-  }
-}
-
+// ── AirPlay & Cast ────────────────────────────────────────────────────────
 function triggerAirPlay() {
   if (videoEl.value) {
     castService.showAirPlayPicker(videoEl.value);
   }
 }
 
-// ── Fullscreen (iOS Safari & Standard) ────────────────────────────────────
+function triggerChromecast() {
+  if (isCasting.value) {
+    castService.stopChromecast();
+  } else if (room.url) {
+    castService.requestChromecastSession(
+      room.url,
+      room.mediaMeta,
+      currentTime.value,
+      paused.value
+    );
+  } else {
+    doToast('Load a video first to cast to TV');
+  }
+}
+
+// ── Fullscreen Support (with iOS Safari webkitEnterFullscreen fallback) ───
 function toggleFullscreen() {
-  const el = videoEl.value;
+  const el = document.querySelector('.player-wrap');
   if (!el) return;
 
-  // iOS Safari native fullscreen on video element
-  if (el.webkitEnterFullscreen) {
-    el.webkitEnterFullscreen();
+  // iOS Safari fallback
+  if (videoEl.value && typeof videoEl.value.webkitEnterFullscreen === 'function' && !document.fullscreenEnabled) {
+    videoEl.value.webkitEnterFullscreen();
     return;
   }
 
@@ -674,21 +717,25 @@ function toggleFullscreen() {
 // ── Player Controls & Native Event Handlers ───────────────────────────────
 function handleUserTapToPlay() {
   needsUserTapToPlay.value = false;
-  if (videoEl.value) {
-    videoEl.value.play().catch(() => {});
-  }
+  safePlay();
 }
 
 function togglePlay() {
   if (!videoEl.value || !room.url) return;
   needsUserTapToPlay.value = false;
   if (videoEl.value.paused) {
-    videoEl.value.play().catch((err) => {
-      if (err.name === 'NotAllowedError') needsUserTapToPlay.value = true;
-    });
+    safePlay();
   } else {
-    videoEl.value.pause();
+    safePause();
   }
+}
+
+function skip(deltaSeconds) {
+  if (!videoEl.value || !room.url) return;
+  const newTime = Math.max(0, Math.min(duration.value || 999999, videoEl.value.currentTime + deltaSeconds));
+  videoEl.value.currentTime = newTime;
+  currentTime.value = newTime;
+  socket.send('player.sync', { paused: paused.value, time: newTime });
 }
 
 function toggleMute() {
@@ -766,9 +813,11 @@ function onCanPlay() {
     videoEl.value.muted = isMuted.value;
   }
   if (pendingSync) {
-    const { paused: p, time, serverTime } = pendingSync;
+    const syncToApply = pendingSync;
     pendingSync = null;
-    applySync({ paused: p, time, serverTime });
+    setTimeout(() => {
+      applySync(syncToApply);
+    }, 60);
   }
 }
 
@@ -777,21 +826,30 @@ function onVideoError() {
   buffering.value = false;
 }
 
-// ── Remote Sync Engine ────────────────────────────────────────────────────
-function applySync({ paused: p, time, serverTime }) {
-  if (!videoEl.value) return;
+// ── Smart Synchronization Engine ──────────────────────────────────────────
+async function applySync(data) {
+  if (!videoEl.value || !data) return;
 
-  const elapsed = (Date.now() - serverTime) / 1000;
-  const target = p ? time : time + Math.max(0, elapsed);
+  // Discard older out-of-order packets if sequence tracking is present
+  if (data.seq && lastAppliedSeq && data.seq < lastAppliedSeq) {
+    logDebug(`Discarding stale sync #${data.seq} (current: #${lastAppliedSeq})`);
+    return;
+  }
+  if (data.seq) lastAppliedSeq = data.seq;
+
+  const elapsed = data.serverTime ? Math.max(0, (Date.now() - data.serverTime) / 1000) : 0;
+  const target = data.paused ? data.time : data.time + elapsed;
 
   isApplyingRemoteSync = true;
   clearTimeout(remoteSyncTimer);
 
-  logDebug(`Remote Sync: ${p ? 'PAUSE' : 'PLAY'} at ${target.toFixed(1)}s (drift: ${(videoEl.value.currentTime - target).toFixed(1)}s)`);
+  logDebug(`ApplySync #${data.seq || 0}: ${data.paused ? 'PAUSE' : 'PLAY'} at ${target.toFixed(2)}s (current: ${videoEl.value.currentTime.toFixed(2)}s)`);
 
-  if (p) {
-    videoEl.value.pause();
-    videoEl.value.currentTime = Math.max(0, target);
+  if (data.paused) {
+    await safePause();
+    if (Math.abs(videoEl.value.currentTime - target) > 0.3) {
+      videoEl.value.currentTime = Math.max(0, target);
+    }
     paused.value = true;
     needsUserTapToPlay.value = false;
     if (isCasting.value) {
@@ -799,15 +857,11 @@ function applySync({ paused: p, time, serverTime }) {
       castService.sendSeekToCast(target);
     }
   } else {
-    // If drift is significant (> 1.5s), seek to align
-    if (Math.abs(videoEl.value.currentTime - target) > 1.5) {
+    // Only seek if drift exceeds 1.0s to avoid audio clipping / stutter
+    if (Math.abs(videoEl.value.currentTime - target) > 1.0) {
       videoEl.value.currentTime = Math.max(0, target);
     }
-    videoEl.value.play().catch((err) => {
-      if (err.name === 'NotAllowedError') {
-        needsUserTapToPlay.value = true;
-      }
-    });
+    await safePlay();
     paused.value = false;
     if (isCasting.value) {
       castService.sendPlayToCast();
@@ -817,7 +871,7 @@ function applySync({ paused: p, time, serverTime }) {
 
   remoteSyncTimer = setTimeout(() => {
     isApplyingRemoteSync = false;
-  }, 500);
+  }, 400);
 }
 
 // ── UI Helpers ────────────────────────────────────────────────────────────
@@ -866,8 +920,8 @@ function fmtTimestamp(ts) {
 
 // ── Name Prompts ──────────────────────────────────────────────────────────
 function confirmJoinName() {
-  const name = joinNameInput.value.trim();
-  if (!name) return;
+  const name = joinNameInput.value.trim() || profileStore.current.name || 'Friend';
+  profileStore.updateCurrentName(name);
   localStorage.setItem('hp-username', name);
   socket.send('user.name', { name });
   showJoinPrompt.value = false;
@@ -877,23 +931,40 @@ function confirmJoinName() {
 }
 
 function openRenameModal() {
-  renameInput.value = room.you?.name || '';
+  renameInput.value = room.you?.name || profileStore.current.name || '';
   showRenameModal.value = true;
 }
 
 function saveNewName() {
   const name = renameInput.value.trim();
   if (!name) return;
+  profileStore.updateCurrentName(name);
   localStorage.setItem('hp-username', name);
   socket.send('user.name', { name });
   showRenameModal.value = false;
   doToast(`Name changed to ${name}`);
 }
 
+// ── Chat ──────────────────────────────────────────────────────────────────
+function sendMessage() {
+  const content = chatInput.value.trim();
+  if (!content) return;
+  socket.send('room.message', { content });
+  chatInput.value = '';
+}
+
+function scrollMessages() {
+  nextTick(() => {
+    if (messagesEl.value) {
+      messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
+    }
+  });
+}
+
 // ── Keyboard Shortcuts ────────────────────────────────────────────────────
 function onKeyDown(e) {
   if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-  if (showSearchModal.value || showAddonsModal.value || showSubtitlesModal.value || showJoinPrompt.value || showRenameModal.value || roomNotFound.value) return;
+  if (showSearchModal.value || showAddonsModal.value || showSubtitlesModal.value || showProfileModal.value || showJoinPrompt.value || showRenameModal.value || roomNotFound.value) return;
 
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   if (e.code === 'KeyF') toggleFullscreen();
@@ -922,11 +993,21 @@ watch(volume, (v) => {
   }
 });
 
+// Record friends automatically when room users change
+watch(() => room.users, (users) => {
+  if (users && users.length > 0) {
+    profileStore.recordFriends(users, room.you?.id);
+  }
+}, { deep: true });
+
 // ── Lifecycle ─────────────────────────────────────────────────────────────
-onMounted(() => {
+onMounted(async () => {
   const rawCode = route.params.roomId;
   const roomId = (rawCode || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
-  const savedName = localStorage.getItem('hp-username');
+  await profileStore.init();
+
+  const savedName = profileStore.current.name || localStorage.getItem('hp-username');
+  joinNameInput.value = savedName || '';
 
   document.addEventListener('keydown', onKeyDown);
 
@@ -978,6 +1059,10 @@ onMounted(() => {
         player: data.player,
       });
 
+      if (data.users?.length) {
+        profileStore.recordFriends(data.users, data.you?.id);
+      }
+
       if (data.url && data.player) {
         pendingSync = data.player;
       }
@@ -990,6 +1075,7 @@ onMounted(() => {
 
     socket.on('room.users', ({ users }) => {
       room.users = users;
+      profileStore.recordFriends(users, room.you?.id);
     }),
 
     socket.on('room.host', ({ hostId }) => {
@@ -1006,10 +1092,25 @@ onMounted(() => {
       duration.value = 0;
       showUrlBar.value = false;
       pendingSync = null;
+      lastAppliedSeq = 0;
 
       // If casting, load new URL on Chromecast
       if (isCasting.value && data.url) {
         castService.loadMediaOnChromecast(data.url, data.mediaMeta, 0, false);
+      }
+
+      // Record to encrypted profile history
+      if (data.url && data.mediaMeta) {
+        profileStore.recordWatch({
+          id: data.mediaMeta.id,
+          title: data.mediaMeta.title,
+          episodeTitle: data.mediaMeta.episodeTitle,
+          year: data.mediaMeta.year,
+          poster: data.mediaMeta.poster,
+          url: data.url,
+          progressSeconds: 0,
+          durationSeconds: 0,
+        });
       }
 
       // Auto-load subtitle
@@ -1062,92 +1163,149 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.room-page {
+.room {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  width: 100vw;
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
   position: relative;
 }
 
+/* ── 404 Room Not Found Overlay ─────────────────────────────────────────── */
+.room-not-found-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 15, 0.95);
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 1100;
+  animation: fade-in 0.25s ease both;
+}
+.not-found-card {
+  width: min(440px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 36px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+  box-shadow: 0 32px 80px rgba(0, 0, 0, 0.8);
+}
+.nf-icon-wrap {
+  width: 64px; height: 64px;
+  border-radius: 50%;
+  background: rgba(224, 61, 90, 0.12);
+  border: 1px solid rgba(224, 61, 90, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+.not-found-card h2 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.nf-desc {
+  font-size: 0.88rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.nf-desc code {
+  background: var(--surface2);
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--accent);
+  font-weight: 700;
+}
+.nf-actions {
+  margin-top: 8px;
+  width: 100%;
+}
+.btn-return-home {
+  display: block;
+  width: 100%;
+  padding: 12px 20px;
+  background: var(--accent);
+  border-radius: var(--radius-sm);
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: #fff;
+  text-align: center;
+  transition: filter 0.15s, transform 0.1s;
+}
+.btn-return-home:hover { filter: brightness(1.15); transform: translateY(-1px); }
+
 /* ── Join / Rename Overlays ─────────────────────────────────────────────── */
 .join-overlay {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 16px;
-  z-index: 2000;
-  animation: fade-in 0.25s ease both;
+  z-index: 1000;
+  animation: fade-in 0.2s ease both;
 }
-
 .join-card {
-  width: min(440px, 100%);
+  width: min(380px, 100%);
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
-  padding: 32px 28px;
-  box-shadow: 0 24px 64px rgba(0,0,0,0.8);
+  padding: 28px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  text-align: center;
+  gap: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
 }
-
 .join-badge {
-  align-self: center;
-  background: var(--accent-dim);
+  display: inline-flex;
+  align-self: flex-start;
+  font-size: 0.72rem;
+  font-weight: 700;
   color: var(--accent);
-  font-size: 0.78rem;
-  font-weight: 700;
-  padding: 4px 12px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(224, 61, 90, 0.3);
+  padding: 3px 8px;
   border-radius: 999px;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.05em;
 }
-
-.join-card h2 {
-  font-size: 1.35rem;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.join-sub {
-  font-size: 0.88rem;
-  color: var(--muted);
-  line-height: 1.45;
-}
+.join-card h2 { font-size: 1.25rem; font-weight: 700; color: var(--text); }
+.join-sub { font-size: 0.82rem; color: var(--muted); margin-top: -6px; }
 
 .join-form {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 8px;
 }
-
 .join-form input {
+  width: 100%;
   background: var(--surface2);
-  border: 1px solid var(--border-light);
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 12px 16px;
+  padding: 10px 14px;
   font-size: 0.95rem;
   color: var(--text);
-  text-align: center;
   transition: border-color 0.15s;
 }
 .join-form input:focus { border-color: var(--accent); }
 
 .btn-join-room {
-  padding: 12px 20px;
+  padding: 11px 20px;
   background: var(--accent);
   border-radius: var(--radius-sm);
-  font-size: 0.95rem;
-  font-weight: 700;
+  font-size: 0.92rem;
+  font-weight: 600;
   color: #fff;
   transition: filter 0.15s;
 }
@@ -1156,28 +1314,30 @@ onMounted(() => {
 .rename-actions {
   display: flex;
   gap: 8px;
+  justify-content: flex-end;
 }
 .btn-cancel {
-  flex: 1;
-  padding: 10px;
+  padding: 8px 16px;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
+  font-size: 0.85rem;
   color: var(--muted);
-  font-size: 0.9rem;
 }
+.btn-cancel:hover { color: var(--text); border-color: var(--border-light); }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 18px;
   height: 54px;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
   flex-shrink: 0;
   z-index: 10;
+  gap: 12px;
 }
 
 .header-left, .header-right {
@@ -1191,12 +1351,16 @@ onMounted(() => {
   align-items: center;
   gap: 6px;
   text-decoration: none;
+  font-size: 1.1rem;
   font-weight: 700;
-  font-size: 1.05rem;
-  margin-right: 6px;
+  color: var(--text);
 }
 .logo-heart { color: var(--accent); font-size: 1.2rem; }
-.logo-text { color: var(--text); }
+.logo-text {
+  background: linear-gradient(120deg, #fff 40%, var(--accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
 
 .room-code-badge {
   display: flex;
@@ -1210,25 +1374,22 @@ onMounted(() => {
   position: relative;
   transition: border-color 0.15s;
 }
-.room-code-badge:hover { border-color: var(--border-light); }
-.room-label { font-size: 0.7rem; color: var(--muted); font-weight: 700; }
-.room-id { font-size: 0.85rem; font-weight: 700; color: var(--gold); letter-spacing: 0.05em; }
+.room-code-badge:hover { border-color: var(--accent); }
+.room-label { font-size: 0.68rem; font-weight: 700; color: var(--muted); }
+.room-id { font-size: 0.82rem; font-weight: 700; color: var(--text); letter-spacing: 0.05em; }
 .copy-icon { color: var(--muted); }
-
 .copied-tooltip {
   position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
+  top: 100%; left: 50%;
+  transform: translateX(-50%) translateY(6px);
   background: var(--accent);
   color: #fff;
   font-size: 0.72rem;
-  font-weight: 600;
+  font-weight: 700;
   padding: 3px 8px;
   border-radius: 4px;
   white-space: nowrap;
   pointer-events: none;
-  animation: fade-in 0.15s ease;
 }
 
 .header-btn {
@@ -1240,11 +1401,11 @@ onMounted(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
-  font-size: 0.84rem;
-  font-weight: 600;
+  font-size: 0.82rem;
+  font-weight: 500;
   transition: all 0.15s;
 }
-.header-btn:hover { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); }
+.header-btn:hover { border-color: var(--accent); color: var(--accent); }
 
 .users-pill {
   display: flex;
@@ -1253,24 +1414,25 @@ onMounted(() => {
   background: var(--surface2);
   border: 1px solid var(--border);
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: var(--muted);
 }
-.user-count { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
-
+.user-count { font-weight: 700; color: var(--text); }
 .users-avatar-stack {
   display: flex;
   align-items: center;
-  margin-left: 2px;
+  margin-left: 4px;
 }
 .user-dot {
-  width: 20px; height: 20px;
+  width: 18px; height: 18px;
   border-radius: 50%;
-  border: 2px solid var(--surface);
+  border: 2px solid var(--surface2);
   margin-left: -5px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.65rem;
+  font-size: 0.6rem;
   font-weight: 700;
   color: #fff;
 }
@@ -1279,11 +1441,11 @@ onMounted(() => {
 .user-chip-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   background: var(--surface2);
   border: 1px solid var(--border);
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: 0.82rem;
   font-weight: 600;
   color: var(--text);
@@ -1292,6 +1454,14 @@ onMounted(() => {
 }
 .user-chip-btn:hover { border-color: var(--accent); }
 .user-color-dot { width: 8px; height: 8px; border-radius: 50%; }
+
+.vault-mini-tag {
+  font-size: 0.65rem;
+  color: #3dbe7a;
+  background: rgba(61, 190, 122, 0.12);
+  padding: 1px 5px;
+  border-radius: 999px;
+}
 
 .icon-btn {
   width: 34px; height: 34px;
@@ -1332,59 +1502,60 @@ onMounted(() => {
   position: relative;
 }
 
-/* ── Player ─────────────────────────────────────────────────────────────── */
+/* ── Player Wrap ────────────────────────────────────────────────────────── */
 .player-wrap {
   flex: 1;
   background: #000;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
   overflow: hidden;
-  user-select: none;
 }
 
 video {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  display: block;
+  background: #000;
 }
 
+/* Placeholder */
 .placeholder {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: radial-gradient(circle at center, #181824 0%, #0c0c14 100%);
   padding: 24px;
 }
 .placeholder-inner {
+  max-width: 440px;
+  text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  text-align: center;
-  max-width: 440px;
-  gap: 10px;
+  gap: 14px;
 }
 .ph-icon-wrap {
-  width: 72px; height: 72px;
+  width: 80px; height: 80px;
   border-radius: 50%;
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: var(--accent-dim);
+  border: 1px solid rgba(224, 61, 90, 0.3);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--accent);
-  margin-bottom: 6px;
 }
-.ph-title { font-size: 1.25rem; font-weight: 700; color: var(--text); }
-.ph-sub { font-size: 0.88rem; color: var(--muted); line-height: 1.45; }
-
+.ph-title { font-size: 1.3rem; font-weight: 700; color: var(--text); }
+.ph-sub { font-size: 0.88rem; color: var(--muted); line-height: 1.5; }
 .placeholder-actions {
   display: flex;
   gap: 10px;
-  margin-top: 8px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 .btn-ph-search, .btn-ph-url {
   display: flex;
@@ -1445,30 +1616,6 @@ video {
 }
 .tap-play-btn:hover { transform: scale(1.05); }
 
-/* Floating top actions on player hover */
-.player-floating-actions {
-  position: absolute;
-  top: 16px; right: 16px;
-  display: flex;
-  gap: 8px;
-  z-index: 5;
-}
-.float-btn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: rgba(18, 18, 26, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  font-size: 0.8rem;
-  font-weight: 600;
-  backdrop-filter: blur(8px);
-  transition: all 0.15s;
-}
-.float-btn:hover { background: var(--surface); border-color: var(--accent); }
-
 /* Media Title Top Overlay */
 .media-title-overlay {
   position: absolute;
@@ -1476,46 +1623,49 @@ video {
   background: rgba(18, 18, 26, 0.8);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-sm);
-  padding: 6px 12px;
-  backdrop-filter: blur(8px);
+  padding: 8px 14px;
   display: flex;
   align-items: center;
   gap: 8px;
+  backdrop-filter: blur(8px);
   z-index: 5;
+  font-size: 0.85rem;
+  color: var(--text);
 }
-.m-title { font-size: 0.88rem; font-weight: 700; color: #fff; }
-.m-ep { font-size: 0.8rem; color: var(--gold); }
-.m-year { font-size: 0.8rem; color: var(--muted); }
+.m-title { font-weight: 700; }
+.m-ep { color: var(--gold); }
+.m-year { color: var(--muted); }
 
-/* Direct URL Bar */
+/* Direct URL bar */
 .url-bar-wrap {
   position: absolute;
-  top: 16px; left: 50%;
+  top: 16px;
+  left: 50%;
   transform: translateX(-50%);
-  width: min(600px, 90%);
+  width: min(600px, 92%);
   z-index: 20;
+  animation: slide-down 0.2s ease both;
 }
 .url-bar {
   display: flex;
-  align-items: center;
   gap: 8px;
-  background: var(--surface);
+  background: rgba(18, 18, 26, 0.95);
   border: 1px solid var(--border-light);
-  border-radius: var(--radius);
-  padding: 6px 10px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
 }
 .url-bar input {
   flex: 1;
   background: transparent;
   border: none;
-  font-size: 0.9rem;
   color: var(--text);
-  padding: 6px 8px;
+  font-size: 0.9rem;
 }
 .url-bar input:focus { outline: none; }
 .btn-load-url {
-  padding: 8px 14px;
+  padding: 6px 14px;
   background: var(--accent);
   border-radius: var(--radius-sm);
   font-size: 0.82rem;
@@ -1523,34 +1673,90 @@ video {
   color: #fff;
   white-space: nowrap;
 }
+.btn-load-url:hover:not(:disabled) { filter: brightness(1.15); }
 .btn-close-url {
-  color: var(--muted);
-  padding: 4px;
+  width: 28px; height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--muted);
 }
 .btn-close-url:hover { color: var(--text); }
 
 /* ── Player Controls Overlay ────────────────────────────────────────────── */
 .controls {
   position: absolute;
-  inset-x: 0; bottom: 0;
-  padding: 24px 20px 16px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%);
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  bottom: 0; left: 0; right: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.3) 60%, transparent 100%);
+  padding: 32px 16px 12px;
   z-index: 10;
+  transition: opacity 0.3s ease, transform 0.3s ease;
 }
-.player-wrap.controls-hidden .controls {
+.controls-hidden .controls,
+.controls-hidden .media-title-overlay {
   opacity: 0;
   pointer-events: none;
-  transform: translateY(8px);
 }
 
 .controls-inner {
   display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Scrub Bar */
+.scrub-bar-wrap {
+  position: relative;
+  width: 100%;
+  height: 6px;
+  display: flex;
   align-items: center;
-  gap: 12px;
+  cursor: pointer;
+}
+.scrub-bar-wrap:hover .scrub-bar { height: 8px; }
+.scrub-bar {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+  transition: height 0.15s;
+}
+.scrub-bar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(224, 61, 90, 0.8);
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+.scrub-bar:hover::-webkit-slider-thumb { transform: scale(1.25); }
+.scrub-progress {
+  position: absolute;
+  top: 50%; left: 0;
+  transform: translateY(-50%);
+  height: 4px;
+  background: var(--accent);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.controls-left, .controls-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .ctrl-btn {
@@ -1559,182 +1765,168 @@ video {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.15);
   color: #fff;
-  backdrop-filter: blur(4px);
-  transition: all 0.15s;
-  flex-shrink: 0;
+  background: transparent;
+  transition: background 0.15s, color 0.15s;
+  position: relative;
 }
-.ctrl-btn:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.3); }
-.ctrl-btn.play-btn {
-  width: 42px; height: 42px;
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.ctrl-btn.play-btn:hover { filter: brightness(1.15); }
-.ctrl-btn.sm { width: 32px; height: 32px; }
+.ctrl-btn:hover { background: rgba(255, 255, 255, 0.15); }
+.ctrl-btn.active { color: var(--accent); }
 
-.sub-ctrl-btn.sub-active {
-  background: var(--accent-dim);
-  border-color: var(--accent);
-  color: var(--accent);
+.sub-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  margin-left: 2px;
+  background: var(--accent);
+  color: #fff;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.vol-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.vol-slider {
+  width: 70px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  outline: none;
+  cursor: pointer;
+}
+.vol-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
 }
 
 .time-display {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #fff;
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-.time-display.muted { color: rgba(255, 255, 255, 0.5); }
-
-.seek-bar {
-  flex: 1;
-  height: 6px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-.volume-wrap {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
+  margin-left: 6px;
 }
-.volume-bar {
-  width: 60px;
-  height: 4px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
+.time-sep { color: rgba(255, 255, 255, 0.4); }
 
 /* ── Chat Sidebar ───────────────────────────────────────────────────────── */
-.sidebar {
+.chat-sidebar {
   width: 320px;
   background: var(--surface);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  height: 100%;
+  transition: width 0.25s ease, transform 0.25s ease;
+}
+.chat-sidebar:not(.open) {
+  width: 0;
+  border-left-width: 0;
+  overflow: hidden;
 }
 
-.sidebar-header {
+.chat-header {
+  height: 46px;
+  border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.95rem;
-  font-weight: 700;
+  padding: 0 14px;
+  flex-shrink: 0;
+}
+.chat-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
   color: var(--text);
 }
 
-.messages {
+.chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 14px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-
 .chat-empty {
-  text-align: center;
-  padding: 40px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
   color: var(--muted);
-  font-size: 0.85rem;
+  text-align: center;
+  font-size: 0.82rem;
+  gap: 8px;
 }
-.chat-empty-sub { font-size: 0.78rem; margin-top: 4px; }
 
-.msg {
+.chat-msg {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-width: 90%;
-  animation: fade-in 0.15s ease both;
 }
-.msg.mine {
-  align-self: flex-end;
-  align-items: flex-end;
-}
-
-.msg-meta {
+.msg-header {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.75rem;
 }
-.msg-author { font-weight: 700; }
-.msg-ts { font-size: 0.7rem; color: var(--muted); font-variant-numeric: tabular-nums; }
-
-.msg-body {
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
+.msg-author { font-size: 0.78rem; font-weight: 700; }
+.msg-time { font-size: 0.68rem; color: var(--muted); }
+.msg-content {
   font-size: 0.85rem;
   color: var(--text);
   line-height: 1.4;
   word-break: break-word;
 }
-.msg.mine .msg-body {
-  background: var(--accent-dim);
-  border-color: rgba(224, 61, 90, 0.3);
-}
 
-/* System messages in chat */
 .system-msg {
-  align-self: center;
-  max-width: 100%;
-  margin: 4px 0;
-}
-.system-msg-inner {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-style: italic;
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.76rem;
-  color: var(--muted);
-  background: rgba(255, 255, 255, 0.03);
-  padding: 3px 8px;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
 }
-.system-text { font-style: italic; }
+.sys-time { color: rgba(255, 255, 255, 0.35); font-size: 0.68rem; font-style: normal; }
 
-.chat-form {
-  display: flex;
-  gap: 8px;
-  padding: 12px;
+.chat-footer {
+  padding: 10px 12px;
   border-top: 1px solid var(--border);
-  background: var(--surface);
-}
-.chat-form input {
-  flex: 1;
+  display: flex;
+  gap: 6px;
   background: var(--surface2);
+}
+.chat-footer input {
+  flex: 1;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 8px 12px;
+  padding: 8px 10px;
   font-size: 0.85rem;
   color: var(--text);
-  transition: border-color 0.15s;
 }
-.chat-form input:focus { border-color: var(--accent); }
-
+.chat-footer input:focus { border-color: var(--accent); }
 .btn-send {
-  width: 36px; height: 36px;
-  background: var(--accent);
+  width: 34px; height: 34px;
   border-radius: var(--radius-sm);
+  background: var(--accent);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
-  transition: filter 0.15s;
 }
 .btn-send:hover:not(:disabled) { filter: brightness(1.15); }
-.btn-send:disabled { opacity: 0.5; }
 
 /* ── Toast ──────────────────────────────────────────────────────────────── */
 .toast {
@@ -1745,15 +1937,14 @@ video {
   background: rgba(18, 18, 26, 0.95);
   border: 1px solid var(--border-light);
   color: var(--text);
-  padding: 10px 18px;
-  border-radius: var(--radius);
-  font-size: 0.85rem;
-  font-weight: 600;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  font-size: 0.88rem;
+  font-weight: 500;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
+  z-index: 2000;
   backdrop-filter: blur(8px);
-  z-index: 9999;
-  pointer-events: none;
 }
-.toast-enter-active, .toast-leave-active { transition: all 0.2s ease; }
+.toast-enter-active, .toast-leave-active { transition: all 0.25s ease; }
 .toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, 10px); }
 </style>

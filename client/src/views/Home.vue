@@ -5,6 +5,13 @@
     <div class="bg-blob blob2" aria-hidden="true"></div>
 
     <div class="hero">
+      <!-- Profile Header Chip -->
+      <button class="profile-top-chip" @click="showProfileModal = true" title="Manage Profiles & Encrypted History">
+        <span class="p-dot" :style="{ background: profileStore.current.avatarColor }"></span>
+        <span class="p-name">{{ profileStore.current.name }}</span>
+        <span class="p-vault-tag">🔒 Vault</span>
+      </button>
+
       <!-- Logo -->
       <div class="logo" aria-label="HeartPeario">
         <span class="heart" aria-hidden="true">♥</span>
@@ -47,8 +54,8 @@
             id="hp-join-code"
             v-model="joinCode"
             type="text"
-            placeholder="Room code…"
-            maxlength="6"
+            placeholder="Room code (e.g. TEST)"
+            maxlength="10"
             autocomplete="off"
             @keyup.enter="joinRoom"
           />
@@ -65,31 +72,50 @@
         <p class="error" v-if="error" aria-live="polite">{{ error }}</p>
       </div>
 
+      <!-- Quick Test Room Shortcut -->
+      <div class="quick-join-hint">
+        <span>Public Test Room: </span>
+        <button class="link-btn" @click="joinCode = 'TEST'; joinRoom()">Join "TEST" Room</button>
+      </div>
+
       <p class="hint">Share the room link — anyone who opens it joins instantly.</p>
     </div>
+
+    <!-- Profile & History Modal -->
+    <ProfileModal
+      v-if="showProfileModal"
+      @close="showProfileModal = false"
+    />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import socket from '@/services/socket';
 import { useRoomStore } from '@/stores/room';
+import { useProfileStore } from '@/stores/profile';
+import ProfileModal from '@/components/ProfileModal.vue';
 
 const router = useRouter();
 const room = useRoomStore();
+const profileStore = useProfileStore();
 
-const username = ref(localStorage.getItem('hp-username') || '');
+const username = ref('');
 const joinCode = ref('');
 const creating = ref(false);
 const error = ref('');
+const showProfileModal = ref(false);
+
+watch(() => profileStore.current.name, (val) => {
+  if (val && !username.value) username.value = val;
+});
 
 function applyUsername() {
-  const name = username.value.trim();
-  if (name) {
-    localStorage.setItem('hp-username', name);
-    socket.send('user.name', { name });
-  }
+  const name = username.value.trim() || profileStore.current.name || 'Friend';
+  profileStore.updateCurrentName(name);
+  localStorage.setItem('hp-username', name);
+  socket.send('user.name', { name });
 }
 
 function createRoom() {
@@ -107,8 +133,10 @@ function joinRoom() {
   socket.send('room.join', { roomId: code });
 }
 
-onMounted(() => {
+onMounted(async () => {
   room.reset();
+  await profileStore.init();
+  username.value = profileStore.current.name || localStorage.getItem('hp-username') || '';
 
   const offs = [
     socket.on('room.joined', (data) => {
@@ -123,9 +151,9 @@ onMounted(() => {
       });
       router.push({ name: 'room', params: { roomId: data.roomId } });
     }),
-    socket.on('error', ({ message }) => {
+    socket.on('error', (err) => {
       creating.value = false;
-      error.value = message;
+      error.value = err.message || 'Room not found';
     }),
   ];
 
@@ -169,8 +197,39 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
+  gap: 18px;
   animation: fade-in 0.5s ease both;
+}
+
+.profile-top-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.profile-top-chip:hover {
+  border-color: var(--accent);
+  background: var(--surface2);
+  transform: translateY(-1px);
+}
+.p-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+}
+.p-vault-tag {
+  font-size: 0.68rem;
+  color: #3dbe7a;
+  background: rgba(61, 190, 122, 0.12);
+  padding: 2px 6px;
+  border-radius: 999px;
 }
 
 /* Logo */
@@ -298,10 +357,25 @@ onMounted(() => {
 .join-row input {
   flex: 1;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
   font-weight: 600;
-  font-size: 1rem;
+  font-size: 0.95rem;
 }
+
+/* Quick Join */
+.quick-join-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.link-btn {
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+.link-btn:hover { text-decoration: underline; }
 
 /* Error */
 .error {
