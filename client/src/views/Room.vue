@@ -158,17 +158,29 @@
             <!-- Duration -->
             <span class="time-display muted">{{ fmtTime(duration) }}</span>
 
-            <!-- Volume -->
-            <input
-              id="hp-volume"
-              class="volume-bar"
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              v-model.number="volume"
-              title="Volume"
-            />
+            <!-- Volume & Mute -->
+            <div class="volume-wrap">
+              <button
+                id="hp-mute-btn"
+                class="ctrl-btn sm"
+                :title="isMuted || volume === 0 ? 'Unmute (M)' : 'Mute (M)'"
+                @click="toggleMute"
+              >
+                <span v-if="isMuted || volume === 0">🔇</span>
+                <span v-else-if="volume < 0.5">🔉</span>
+                <span v-else>🔊</span>
+              </button>
+              <input
+                id="hp-volume"
+                class="volume-bar"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                v-model.number="volume"
+                title="Volume"
+              />
+            </div>
 
             <!-- Fullscreen -->
             <button
@@ -251,6 +263,8 @@ const paused      = ref(true);
 const currentTime = ref(0);
 const duration    = ref(0);
 const volume      = ref(1);
+const isMuted     = ref(false);
+const prevVolume  = ref(1);
 const buffering   = ref(false);
 const seeking     = ref(false);
 
@@ -271,8 +285,35 @@ let pendingSync  = null;   // applied on first canplay
 let hideTimer    = null;
 let toastTimer   = null;
 
-// ── Volume watcher ────────────────────────────────────────────────────────
-watch(volume, v => { if (videoEl.value) videoEl.value.volume = v; });
+// ── Volume & Mute ─────────────────────────────────────────────────────────
+watch(volume, v => {
+  if (videoEl.value) {
+    videoEl.value.volume = v;
+    if (v > 0) {
+      videoEl.value.muted = false;
+      isMuted.value = false;
+    } else {
+      isMuted.value = true;
+      videoEl.value.muted = true;
+    }
+  }
+});
+
+function toggleMute() {
+  if (!videoEl.value) return;
+  if (isMuted.value || volume.value === 0) {
+    isMuted.value = false;
+    volume.value = prevVolume.value > 0 ? prevVolume.value : 0.8;
+    videoEl.value.muted = false;
+    videoEl.value.volume = volume.value;
+  } else {
+    prevVolume.value = volume.value;
+    isMuted.value = true;
+    volume.value = 0;
+    videoEl.value.muted = true;
+    videoEl.value.volume = 0;
+  }
+}
 
 // ── Chat unread badge ─────────────────────────────────────────────────────
 watch(() => room.messages.length, () => {
@@ -401,6 +442,10 @@ function onDurationChange() {
 
 function onCanPlay() {
   buffering.value = false;
+  if (videoEl.value) {
+    videoEl.value.volume = isMuted.value ? 0 : volume.value;
+    videoEl.value.muted = isMuted.value;
+  }
   if (pendingSync) {
     const { paused: p, time, serverTime } = pendingSync;
     pendingSync = null;
@@ -441,6 +486,7 @@ function onKeyDown(e) {
   if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   if (e.code === 'KeyF') toggleFullscreen();
+  if (e.code === 'KeyM') toggleMute();
 }
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -849,11 +895,24 @@ video {
   accent-color: var(--accent);
 }
 
+.volume-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 .volume-bar {
   width: 70px;
   flex-shrink: 0;
   height: 3px;
   accent-color: var(--text);
+}
+
+.ctrl-btn.sm {
+  width: 28px;
+  height: 28px;
+  font-size: 0.88rem;
 }
 
 /* ── Sidebar ────────────────────────────────────────────────────────────── */
