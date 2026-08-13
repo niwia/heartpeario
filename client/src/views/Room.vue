@@ -244,6 +244,28 @@
               />
             </div>
 
+            <!-- AirPlay button (Apple Safari / iOS) -->
+            <button
+              v-if="airplayAvailable"
+              id="hp-airplay-btn"
+              class="ctrl-btn sm sub-ctrl-btn"
+              title="Stream to TV via Apple AirPlay"
+              @click="triggerAirPlay"
+            >
+              <span class="cast-icon">⎋</span>
+            </button>
+
+            <!-- Google Cast / Chromecast button -->
+            <button
+              id="hp-cast-btn"
+              class="ctrl-btn sm sub-ctrl-btn"
+              :class="{ 'sub-active': isCasting }"
+              :title="isCasting ? 'Connected to TV (Chromecast)' : 'Cast to TV Screen (Chromecast)'"
+              @click="triggerChromecast"
+            >
+              <span class="cast-icon">⎚</span>
+            </button>
+
             <!-- Fullscreen -->
             <button
               id="hp-fullscreen"
@@ -335,6 +357,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useRoomStore } from '@/stores/room';
 import socket from '@/services/socket';
 import { createVttUrlFromRemote, srtToVtt } from '@/services/subtitle.service';
+import castService from '@/services/cast.service';
 
 import SearchMediaModal from '@/components/SearchMediaModal.vue';
 import AddonManagerModal from '@/components/AddonManagerModal.vue';
@@ -344,11 +367,13 @@ const route = useRoute();
 const router = useRouter();
 const room = useRoomStore();
 
-// ── Modals ────────────────────────────────────────────────────────────────
+// ── Modals & Casting ──────────────────────────────────────────────────────
 const showSearchModal = ref(false);
 const showAddonsModal = ref(false);
 const showSubtitlesModal = ref(false);
 const activeSubTrackBlobUrl = ref(null);
+const isCasting = ref(false);
+const airplayAvailable = ref(false);
 
 // ── Refs ──────────────────────────────────────────────────────────────────
 const videoEl    = ref(null);
@@ -642,6 +667,26 @@ function onVideoError() {
   buffering.value = false;
 }
 
+// ── Chromecast & AirPlay Handlers ─────────────────────────────────────────
+async function triggerChromecast() {
+  if (!room.url) {
+    doToast('Load a video first before casting to TV');
+    return;
+  }
+  try {
+    await castService.requestChromecast(room.url, room.mediaMeta, currentTime.value, paused.value);
+    doToast('Connected to Chromecast 📺');
+  } catch (err) {
+    if (err?.message) doToast(err.message);
+  }
+}
+
+function triggerAirPlay() {
+  if (videoEl.value) {
+    castService.showAirPlayPicker(videoEl.value);
+  }
+}
+
 // ── Apply remote sync ─────────────────────────────────────────────────────
 function applySync({ paused: p, time, serverTime }) {
   if (!videoEl.value) return;
@@ -652,8 +697,13 @@ function applySync({ paused: p, time, serverTime }) {
   videoEl.value.currentTime = Math.max(0, target);
   if (p) {
     videoEl.value.pause();
+    if (isCasting.value) castService.sendPauseToCast();
   } else {
     videoEl.value.play().catch(() => {});
+    if (isCasting.value) castService.sendPlayToCast();
+  }
+  if (isCasting.value) {
+    castService.sendSeekToCast(target);
   }
   paused.value = p;
   setTimeout(() => { suppressSync = false; }, 400);
@@ -678,6 +728,30 @@ onMounted(() => {
 
   document.addEventListener('keydown', onKeyDown);
 
+  // Setup AirPlay availability detection
+  if (videoEl.value) {
+    castService.setupAirPlay(videoEl.value, (available) => {
+      airplayAvailable.value = available;
+    });
+  }
+
+  // Setup Google Cast listeners
+  const offCastState = castService.on('stateChange', ({ casting }) => {
+    if (typeof casting === 'boolean') {
+      isCasting.value = casting;
+      doToast(casting ? '📺 Streaming to TV (Chromecast)' : 'Chromecast disconnected');
+    }
+  });
+
+  const offCastSync = castService.on('syncEvent', (evt) => {
+    if (evt.type === 'pause_change') {
+      paused.value = evt.paused;
+      socket.send('player.sync', { paused: evt.paused, time: evt.time || videoEl.value?.currentTime || 0 });
+    } else if (evt.type === 'time_change') {
+      currentTime.value = evt.time;
+    }
+  });
+
   if (!room.roomId) {
     socket.onReconnect = () => socket.send('room.join', { roomId });
     socket.send('room.join', { roomId });
@@ -688,6 +762,8 @@ onMounted(() => {
   }
 
   const offs = [
+    offCastState,
+    offCastSync,
     socket.on('room.joined', (data) => {
       room.$patch({
         roomId: data.roomId,
@@ -728,6 +804,11 @@ onMounted(() => {
       duration.value = 0;
       showUrlBar.value = false;
       pendingSync = null;
+
+      // If casting, load new URL on Chromecast
+      if (isCasting.value && data.url) {
+        castService.loadMediaOnChromecast(data.url, data.mediaMeta, 0, false);
+      }
 
       // Auto-load subtitle
       if (data.subtitles?.length) {
