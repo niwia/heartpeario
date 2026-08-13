@@ -196,8 +196,19 @@
           @error="onVideoError"
           @dblclick.stop="toggleFullscreen"
         >
+          <template v-if="room.subtitles && room.subtitles.length">
+            <track
+              v-for="sub in room.subtitles"
+              :key="sub.id || sub.url || sub.lang"
+              kind="subtitles"
+              :src="sub.url"
+              :srclang="sub.lang || 'en'"
+              :label="sub.langName || sub.lang || 'Subtitles'"
+              :default="sub.lang === room.currentSubtitle?.lang"
+            />
+          </template>
           <track
-            v-if="activeSubTrackBlobUrl"
+            v-else-if="activeSubTrackBlobUrl"
             kind="subtitles"
             :src="activeSubTrackBlobUrl"
             :srclang="room.currentSubtitle?.lang || 'en'"
@@ -206,8 +217,8 @@
           />
         </video>
 
-        <!-- All-Peers Buffer & Readiness Sync Banner -->
-        <div v-if="roomReadiness.waiting && room.url && room.users.length > 1" class="readiness-overlay">
+        <!-- All-Peers Buffer & Readiness Sync Banner (ONLY shown when paused & waiting for peers) -->
+        <div v-if="roomReadiness.waiting && paused && room.url && room.users.length > 1" class="readiness-overlay">
           <div class="readiness-card">
             <div class="readiness-spinner"></div>
             <div class="readiness-info">
@@ -834,16 +845,32 @@ function onDurationChange() {
   if (videoEl.value) duration.value = videoEl.value.duration;
 }
 
+let waitingBufferTimer = null;
+let justUnpausedTimestamp = 0;
+
 function onWaiting() {
-  buffering.value = true;
-  socket.send('player.buffering', { buffering: true });
+  clearTimeout(waitingBufferTimer);
+  // Ignore transient waiting events right after unpausing (within 1.5s)
+  if (Date.now() - justUnpausedTimestamp < 1500) {
+    return;
+  }
+  // Debounce genuine buffering for 1.2s
+  waitingBufferTimer = setTimeout(() => {
+    if (videoEl.value && videoEl.value.readyState < 3 && !paused.value) {
+      buffering.value = true;
+      logDebug('Genuine buffer stall detected (>1.2s) -> sending player.buffering');
+      socket.send('player.buffering', { buffering: true });
+    }
+  }, 1200);
 }
 
 function onSeeking() {
+  clearTimeout(waitingBufferTimer);
   socket.send('player.readiness', { ready: false, time: videoEl.value?.currentTime || 0 });
 }
 
 function onCanPlay() {
+  clearTimeout(waitingBufferTimer);
   buffering.value = false;
   socket.send('player.readiness', { ready: true, time: videoEl.value?.currentTime || 0 });
   socket.send('player.buffering', { buffering: false });
@@ -903,6 +930,8 @@ async function applySync(data) {
       castService.sendSeekToCast(target);
     }
   } else {
+    justUnpausedTimestamp = Date.now();
+    roomReadiness.value.waiting = false;
     // Only seek if drift exceeds 1.0s to avoid audio clipping / stutter
     if (Math.abs(videoEl.value.currentTime - target) > 1.0) {
       videoEl.value.currentTime = Math.max(0, target);

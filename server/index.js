@@ -370,6 +370,11 @@ wss.on('connection', (ws, req) => {
         if (!room) break;
         clearTimeout(room.readinessSafetyTimer);
         room.waitingToPlay = false;
+        if (room.readiness) {
+          for (const u of room.clients.values()) {
+            room.readiness.set(u.id, { ready: true, name: u.name, time: room.player?.time || 0 });
+          }
+        }
         room.seq = (room.seq || 0) + 1;
         room.player = {
           paused: false,
@@ -379,9 +384,15 @@ wss.on('connection', (ws, req) => {
           authorId: userId,
           authorName: user.name,
         };
-        logServer(`[Room ${room.id}] Force play triggered by ${user.name}`);
+        logServer(`[Room ${room.id}] 🚀 Force play triggered by ${user.name} at ${formatTime(room.player.time)}`);
+        broadcastAll(room, 'room.readiness', {
+          readyCount: room.clients.size,
+          totalCount: room.clients.size,
+          waitingFor: [],
+          allReady: true,
+        });
         broadcastAll(room, 'player.sync', room.player);
-        broadcastSystemMessage(room, `${user.name} started playback`);
+        broadcastSystemMessage(room, `${user.name} force-started playback`);
         break;
       }
 
