@@ -304,7 +304,9 @@ wss.on('connection', (ws, req) => {
           authorName: user.name,
         };
 
-        logServer(`[Room ${room.id}] Sync #${room.seq} from ${user.name}: ${paused ? 'PAUSE' : 'PLAY'} at ${formatTime(newTime)}`);
+        const timeDiff = (newTime - prevTime).toFixed(1);
+        const actionType = prevPaused !== !!paused ? (paused ? 'PAUSE' : 'PLAY') : (Math.abs(prevTime - newTime) > 2 ? 'SEEK' : 'UPDATE');
+        logServer(`[Room ${room.id}] Sync #${room.seq} [${actionType}] from ${user.name}: ${paused ? 'PAUSED' : 'PLAYING'} at ${formatTime(newTime)} (${newTime.toFixed(1)}s, Δ ${timeDiff >= 0 ? '+' : ''}${timeDiff}s)`);
 
         // Relay to everyone else with server timestamp and seq
         broadcast(room, 'player.sync', room.player, ws);
@@ -317,7 +319,7 @@ wss.on('connection', (ws, req) => {
             broadcastSystemMessage(room, `${user.name} played at ${formatTime(newTime)}`);
           }
         } else if (Math.abs(prevTime - newTime) > 2) {
-          broadcastSystemMessage(room, `${user.name} seeked to ${formatTime(newTime)}`);
+          broadcastSystemMessage(room, `${user.name} seeked to ${formatTime(newTime)} (Δ ${timeDiff >= 0 ? '+' : ''}${timeDiff}s)`);
         }
         break;
       }

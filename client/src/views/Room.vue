@@ -693,24 +693,34 @@ function triggerChromecast() {
   }
 }
 
-// ── Fullscreen Support (with iOS Safari webkitEnterFullscreen fallback) ───
+// ── Fullscreen Support (with iOS Safari webkitEnterFullscreen) ────────────
+function isAppleDevice() {
+  if (typeof navigator === 'undefined') return false;
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+         (/^((?!chrome|android).)*safari/i.test(navigator.userAgent));
+}
+
 function toggleFullscreen() {
   const el = document.querySelector('.player-wrap');
-  if (!el) return;
+  if (!videoEl.value) return;
 
-  // iOS Safari fallback
-  if (videoEl.value && typeof videoEl.value.webkitEnterFullscreen === 'function' && !document.fullscreenEnabled) {
+  // On Apple Safari / iOS / iPadOS, ALWAYS launch native AVPlayer video fullscreen
+  if (isAppleDevice() && typeof videoEl.value.webkitEnterFullscreen === 'function') {
     videoEl.value.webkitEnterFullscreen();
     return;
   }
 
-  // Standard fullscreen API
+  // Standard fullscreen API for Desktop & Android
   if (document.fullscreenElement || document.webkitFullscreenElement) {
     if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
     else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
   } else {
-    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
-    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    if (el && el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    else if (el && el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    else if (typeof videoEl.value.webkitEnterFullscreen === 'function') {
+      videoEl.value.webkitEnterFullscreen();
+    }
   }
 }
 
@@ -837,13 +847,16 @@ async function applySync(data) {
   }
   if (data.seq) lastAppliedSeq = data.seq;
 
-  const elapsed = data.serverTime ? Math.max(0, (Date.now() - data.serverTime) / 1000) : 0;
+  // Clock-skew safe elapsed calculation (clamped between 0 and 2.5s to prevent clock-drift jumps)
+  const rawElapsed = data.serverTime ? Math.max(0, (Date.now() - data.serverTime) / 1000) : 0;
+  const elapsed = Math.min(2.5, rawElapsed);
   const target = data.paused ? data.time : data.time + elapsed;
 
   isApplyingRemoteSync = true;
   clearTimeout(remoteSyncTimer);
 
-  logDebug(`ApplySync #${data.seq || 0}: ${data.paused ? 'PAUSE' : 'PLAY'} at ${target.toFixed(2)}s (current: ${videoEl.value.currentTime.toFixed(2)}s)`);
+  const drift = (videoEl.value.currentTime - target);
+  logDebug(`ApplySync #${data.seq || 0}: ${data.paused ? 'PAUSE' : 'PLAY'} target=${fmtTime(target)} (${target.toFixed(1)}s, drift: ${drift.toFixed(2)}s, rawElapsed: ${rawElapsed.toFixed(2)}s)`);
 
   if (data.paused) {
     await safePause();
