@@ -1,15 +1,70 @@
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
 const WebSocket = require('ws');
 const { randomBytes } = require('crypto');
 
 const PORT = process.env.PORT || 8080;
-const wss = new WebSocket.Server({ port: PORT });
+const DIST_DIR = path.resolve(__dirname, '../client/dist');
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=UTF-8',
+  '.js': 'application/javascript; charset=UTF-8',
+  '.css': 'text/css; charset=UTF-8',
+  '.json': 'application/json; charset=UTF-8',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.vtt': 'text/vtt; charset=UTF-8',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.ttf': 'font/ttf',
+};
+
+const server = http.createServer((req, res) => {
+  if (!fs.existsSync(DIST_DIR)) {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    return res.end('❤️ HeartPeario WebSocket Sync Server running.');
+  }
+
+  let reqPath = req.url.split('?')[0];
+  if (reqPath.startsWith('/watchpear2')) {
+    reqPath = reqPath.slice('/watchpear2'.length) || '/';
+  }
+  let filePath = path.join(DIST_DIR, reqPath === '/' ? 'index.html' : reqPath);
+
+  // Security check: stay within DIST_DIR
+  if (!filePath.startsWith(DIST_DIR)) {
+    res.writeHead(403);
+    return res.end('Forbidden');
+  }
+
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
+    return fs.createReadStream(filePath).pipe(res);
+  }
+
+  // SPA fallback to index.html
+  const indexPath = path.join(DIST_DIR, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=UTF-8' });
+    return fs.createReadStream(indexPath).pipe(res);
+  }
+
+  res.writeHead(404);
+  res.end('Not Found');
+});
+
+const wss = new WebSocket.Server({ server });
 
 /** @type {Map<string, Room>} */
 const rooms = new Map();
 
 /**
  * @typedef {{ id: string, name: string, color: string }} UserMeta
- * @typedef {{ id: string, hostId: string, url: string|null, player: {paused:boolean,time:number,serverTime:number}, clients: Map<WebSocket, UserMeta> }} Room
+ * @typedef {{ id: string, hostId: string, url: string|null, mediaMeta: any, subtitles: Array, player: {paused:boolean,time:number,serverTime:number}, clients: Map<WebSocket, UserMeta> }} Room
  */
 
 const COLORS = ['#e03d5a', '#5a7de0', '#3dbe7a', '#e0a83d', '#a03de0', '#e05a3d', '#3dbde0'];
@@ -110,7 +165,7 @@ wss.on('connection', (ws) => {
         break;
       }
 
-      // ── Video URL ────────────────────────────────────────────────────────
+      // ── Video URL & Metadata ─────────────────────────────────────────────
       case 'player.url': {
         if (!room) break;
         const url = (payload.url || '').trim();
@@ -174,4 +229,6 @@ wss.on('connection', (ws) => {
   ws.on('error', () => ws.close());
 });
 
-console.log(`❤️  HeartPeario server running on ws://localhost:${PORT}`);
+server.listen(PORT, () => {
+  console.log(`❤️  HeartPeario server running on http://localhost:${PORT}`);
+});

@@ -1,4 +1,14 @@
-const WS_URL = import.meta.env.VITE_WS_URL || `ws://${location.hostname}:8080`;
+function getWsUrl() {
+  if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL;
+  if (typeof location === 'undefined') return 'ws://localhost:8080';
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const basePath = import.meta.env.BASE_URL && import.meta.env.BASE_URL !== '/' 
+    ? import.meta.env.BASE_URL.replace(/\/$/, '') 
+    : '';
+  return `${proto}//${location.host}${basePath}`;
+}
+
+const WS_URL = getWsUrl();
 
 class SocketService {
   constructor() {
@@ -15,11 +25,11 @@ class SocketService {
     if (this.ws && this.ws.readyState <= WebSocket.OPEN) return;
 
     this._intentionalClose = false;
-    this.ws = new WebSocket(WS_URL);
+    this.ws = new WebSocket(getWsUrl());
 
     this.ws.onopen = () => {
       clearTimeout(this._reconnectTimer);
-      console.log('[HeartPeario] Connected');
+      console.log('[HeartPeario] Connected to', getWsUrl());
       if (this.onReconnect) this.onReconnect();
     };
 

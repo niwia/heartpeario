@@ -1,0 +1,7 @@
+services:
+  heartpeario:
+    build: .
+    container_name: heartpeario
+    restart: unless-stopped
+    ports:
+      - "8181:8181"
