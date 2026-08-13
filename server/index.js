@@ -292,6 +292,13 @@ wss.on('connection', (ws, req) => {
         if (!room) break;
         const { ready, time } = payload;
         if (!room.readiness) room.readiness = new Map();
+
+        // Deduplicate: ignore if client readiness state did not change
+        const prevEntry = room.readiness.get(userId);
+        if (prevEntry && prevEntry.ready === !!ready) {
+          break;
+        }
+
         room.readiness.set(userId, { ready: !!ready, name: user.name, time: parseFloat(time) || 0 });
 
         const totalUsers = room.clients.size;

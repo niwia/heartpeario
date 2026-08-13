@@ -847,6 +847,13 @@ function onDurationChange() {
 
 let waitingBufferTimer = null;
 let justUnpausedTimestamp = 0;
+let lastSentReady = null;
+
+function setClientReadiness(isReady) {
+  if (lastSentReady === isReady) return;
+  lastSentReady = isReady;
+  socket.send('player.readiness', { ready: isReady, time: videoEl.value?.currentTime || 0 });
+}
 
 function onWaiting() {
   clearTimeout(waitingBufferTimer);
@@ -866,13 +873,13 @@ function onWaiting() {
 
 function onSeeking() {
   clearTimeout(waitingBufferTimer);
-  socket.send('player.readiness', { ready: false, time: videoEl.value?.currentTime || 0 });
+  setClientReadiness(false);
 }
 
 function onCanPlay() {
   clearTimeout(waitingBufferTimer);
   buffering.value = false;
-  socket.send('player.readiness', { ready: true, time: videoEl.value?.currentTime || 0 });
+  setClientReadiness(true);
   socket.send('player.buffering', { buffering: false });
   if (videoEl.value) {
     videoEl.value.volume = isMuted.value ? 0 : volume.value;
