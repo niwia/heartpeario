@@ -885,10 +885,8 @@ function onPause() {
 }
 
 function onSeeked() {
-  if (!isApplyingRemoteSync && !isUserScrubbing.value && videoEl.value) {
-    logDebug('Native Seeked emitted -> broadcasting sync');
-    socket.send('player.sync', { paused: videoEl.value.paused, time: videoEl.value.currentTime });
-  }
+  // Passive seeked event handler - do not broadcast to avoid ping-pong seek storms.
+  // Explicit user seeks are handled by onSeekEnd() and skip().
 }
 
 function onTimeUpdate() {
@@ -970,22 +968,19 @@ async function applySync(data) {
   }
   if (data.seq) lastAppliedSeq = data.seq;
 
-  // Clock-skew safe elapsed calculation (clamped between 0 and 2.5s to prevent clock-drift jumps)
-  const rawElapsed = data.serverTime ? Math.max(0, (Date.now() - data.serverTime) / 1000) : 0;
-  const elapsed = Math.min(2.5, rawElapsed);
-  const target = data.paused ? data.time : data.time + elapsed;
+  const target = Math.max(0, data.time || 0);
 
   isApplyingRemoteSync = true;
   clearTimeout(remoteSyncTimer);
 
   const drift = (videoEl.value.currentTime - target);
-  logDebug(`ApplySync #${data.seq || 0}: ${data.paused ? 'PAUSE' : 'PLAY'} target=${fmtTime(target)} (${target.toFixed(1)}s, drift: ${drift.toFixed(2)}s, rawElapsed: ${rawElapsed.toFixed(2)}s)`);
+  logDebug(`ApplySync #${data.seq || 0}: ${data.paused ? 'PAUSE' : 'PLAY'} target=${fmtTime(target)} (${target.toFixed(1)}s, current: ${videoEl.value.currentTime.toFixed(1)}s, drift: ${drift.toFixed(2)}s)`);
 
   if (data.paused) {
     if (videoEl.value.playbackRate !== 1.0) videoEl.value.playbackRate = 1.0;
     await safePause();
-    if (Math.abs(videoEl.value.currentTime - target) > 0.3) {
-      videoEl.value.currentTime = Math.max(0, target);
+    if (Math.abs(videoEl.value.currentTime - target) > 0.4) {
+      videoEl.value.currentTime = target;
     }
     paused.value = true;
     needsUserTapToPlay.value = false;
@@ -996,9 +991,9 @@ async function applySync(data) {
   } else {
     justUnpausedTimestamp = Date.now();
     roomReadiness.value.waiting = false;
-    // Only seek on PLAY if drift exceeds 2.0s to avoid audio clipping / stutter
-    if (Math.abs(videoEl.value.currentTime - target) > 2.0) {
-      videoEl.value.currentTime = Math.max(0, target);
+    // Only seek on PLAY if we are far off (> 4s), otherwise start playing cleanly at current spot
+    if (Math.abs(videoEl.value.currentTime - target) > 4.0) {
+      videoEl.value.currentTime = target;
     }
     await safePlay();
     paused.value = false;
@@ -1010,7 +1005,7 @@ async function applySync(data) {
 
   remoteSyncTimer = setTimeout(() => {
     isApplyingRemoteSync = false;
-  }, 800);
+  }, 500);
 }
 
 // ── UI Helpers ────────────────────────────────────────────────────────────
