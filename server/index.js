@@ -486,6 +486,22 @@ wss.on('connection', (ws, req) => {
         });
         break;
       }
+
+      // ── Client Diagnostics & Buffer Health Telemetry ─────────────────────
+      case 'player.diag': {
+        if (!room) break;
+        const { bufferAhead, pbr, drift, reason } = payload;
+        const formattedBuffer = typeof bufferAhead === 'number' ? `${bufferAhead.toFixed(1)}s` : 'unknown';
+        const formattedDrift = typeof drift === 'number' ? `${drift >= 0 ? '+' : ''}${drift.toFixed(2)}s` : '0s';
+        if (reason === 'stall') {
+          logServer(`[Room ${room.id}] ⚠️ Playback stall on ${user.name}: buffer ahead=${formattedBuffer}, pbr=${pbr}x`);
+        } else if (reason === 'rate_change') {
+          logServer(`[Room ${room.id}] 🏎️ Catchup on ${user.name}: pbr=${pbr}x (drift: ${formattedDrift}, buffer: ${formattedBuffer})`);
+        } else if (reason === 'rate_reset') {
+          logServer(`[Room ${room.id}] 🎯 Back in sync on ${user.name}: pbr=1.0x (buffer: ${formattedBuffer})`);
+        }
+        break;
+      }
     }
   });
 

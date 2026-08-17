@@ -899,6 +899,17 @@ function onDurationChange() {
   if (videoEl.value) duration.value = videoEl.value.duration;
 }
 
+function getBufferAhead() {
+  if (!videoEl.value || !videoEl.value.buffered || videoEl.value.buffered.length === 0) return 0;
+  const current = videoEl.value.currentTime;
+  for (let i = 0; i < videoEl.value.buffered.length; i++) {
+    if (videoEl.value.buffered.start(i) <= current && current <= videoEl.value.buffered.end(i)) {
+      return Math.max(0, videoEl.value.buffered.end(i) - current);
+    }
+  }
+  return 0;
+}
+
 let waitingBufferTimer = null;
 let justUnpausedTimestamp = 0;
 let lastSentReady = null;
@@ -915,12 +926,18 @@ function onWaiting() {
   if (Date.now() - justUnpausedTimestamp < 1500) {
     return;
   }
-  // Debounce genuine buffering for 1.2s
+  const buf = getBufferAhead();
   waitingBufferTimer = setTimeout(() => {
     if (videoEl.value && videoEl.value.readyState < 3 && !paused.value) {
       buffering.value = true;
-      logDebug('Genuine buffer stall detected (>1.2s) -> sending player.buffering');
+      logDebug(`Buffer stall detected (buffer ahead: ${buf.toFixed(1)}s) -> sending player.buffering`);
       socket.send('player.buffering', { buffering: true });
+      socket.send('player.diag', {
+        bufferAhead: buf,
+        pbr: videoEl.value.playbackRate,
+        drift: 0,
+        reason: 'stall',
+      });
     }
   }, 1200);
 }
@@ -1279,40 +1296,88 @@ onMounted(async () => {
       room.addMessage(msg);
     }),
 
-    socket.on('room.tsMap', ({ tsMap, roomTime, paused: isRoomPaused, serverTime }) => {
+    socket.on('room.tsMap', ({ tsMap, paused: isRoomPaused }) => {
       roomTsMap.value = tsMap || {};
 
       if (!videoEl.value || paused.value || isRoomPaused || isApplyingRemoteSync || isUserScrubbing.value || !room.url) {
         if (videoEl.value && videoEl.value.playbackRate !== 1.0) {
           videoEl.value.playbackRate = 1.0;
+          socket.send('player.diag', {
+            bufferAhead: getBufferAhead(),
+            pbr: 1.0,
+            drift: 0,
+            reason: 'rate_reset',
+          });
         }
         return;
       }
 
-      // Smooth Micro-Catchup Engine (Playback Rate Ramping ONLY - No Automatic Seeks in Heartbeat)
+      // Smooth Peer-to-Peer Sync Engine (Zero Clock Skew - Compares Real Video Playheads)
+      const myId = room.you?.id;
       const current = videoEl.value.currentTime;
-      const rawElapsed = serverTime ? Math.max(0, (Date.now() - serverTime) / 1000) : 0;
-      const targetTime = roomTime + Math.min(1.0, rawElapsed);
-      const delta = targetTime - current; // positive = we are lagging behind the room
+      let peerLeadTime = null;
 
-      // Micro-catchup for small lag (0.35s to 3.0s behind)
-      if (delta > 0.35 && delta <= 3.0) {
-        const pbr = Math.min(1.08, +(1.0 + (delta / 25)).toFixed(2));
-        if (Math.abs(videoEl.value.playbackRate - pbr) > 0.01) {
-          logDebug(`Micro-catchup ramping playbackRate -> ${pbr}x (lag: ${delta.toFixed(2)}s)`);
-          videoEl.value.playbackRate = pbr;
+      if (tsMap) {
+        for (const [uid, peerData] of Object.entries(tsMap)) {
+          if (uid !== myId && peerData && typeof peerData.time === 'number' && !peerData.buffering) {
+            if (peerLeadTime === null || peerData.time > peerLeadTime) {
+              peerLeadTime = peerData.time;
+            }
+          }
         }
-      } else if (delta < -0.35 && delta >= -2.0) {
-        // Slightly ahead: slow down slightly (0.95x - 0.97x) to let room catch up
-        const pbr = Math.max(0.94, +(1.0 + (delta / 25)).toFixed(2));
-        if (Math.abs(videoEl.value.playbackRate - pbr) > 0.01) {
-          logDebug(`Micro-slowdown ramping playbackRate -> ${pbr}x (ahead: ${(-delta).toFixed(2)}s)`);
-          videoEl.value.playbackRate = pbr;
-        }
-      } else if (Math.abs(delta) < 0.20) {
-        // In sync! Reset playback rate to 1.0x
+      }
+
+      // If no active non-buffering peer, keep normal 1.0x playback
+      if (peerLeadTime === null) {
         if (videoEl.value.playbackRate !== 1.0) {
           videoEl.value.playbackRate = 1.0;
+        }
+        return;
+      }
+
+      // Delta: positive = we are lagging behind the peer lead
+      const delta = peerLeadTime - current;
+
+      // Deadband Zone: If drift is within ±0.45s, preserve smooth audio at pure 1.0x
+      if (Math.abs(delta) < 0.45) {
+        if (videoEl.value.playbackRate !== 1.0) {
+          videoEl.value.playbackRate = 1.0;
+          logDebug(`In sync (drift: ${delta.toFixed(2)}s) -> resetting playbackRate to 1.0x`);
+          socket.send('player.diag', {
+            bufferAhead: getBufferAhead(),
+            pbr: 1.0,
+            drift: delta,
+            reason: 'rate_reset',
+          });
+        }
+        return;
+      }
+
+      // Micro-catchup for moderate lag (0.45s to 2.5s): gentle 1.05x speedup
+      if (delta >= 0.45 && delta <= 2.5) {
+        const targetPbr = 1.05;
+        if (videoEl.value.playbackRate !== targetPbr) {
+          videoEl.value.playbackRate = targetPbr;
+          logDebug(`Catching up -> ${targetPbr}x (lag: ${delta.toFixed(2)}s, buffer ahead: ${getBufferAhead().toFixed(1)}s)`);
+          socket.send('player.diag', {
+            bufferAhead: getBufferAhead(),
+            pbr: targetPbr,
+            drift: delta,
+            reason: 'rate_change',
+          });
+        }
+      } else if (delta <= -0.45 && delta >= -2.0) {
+        // Micro-slowdown for lead (0.45s to 2.0s ahead): gentle 0.95x slowdown
+        const targetPbr = 0.95;
+        if (videoEl.value.playbackRate !== targetPbr) {
+          videoEl.value.playbackRate = targetPbr;
+          logDebug(`Slowing down -> ${targetPbr}x (ahead: ${(-delta).toFixed(2)}s, buffer ahead: ${getBufferAhead().toFixed(1)}s)`);
+          socket.send('player.diag', {
+            bufferAhead: getBufferAhead(),
+            pbr: targetPbr,
+            drift: delta,
+            reason: 'rate_change',
+          });
         }
       }
     }),
