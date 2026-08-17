@@ -996,8 +996,8 @@ async function applySync(data) {
   } else {
     justUnpausedTimestamp = Date.now();
     roomReadiness.value.waiting = false;
-    // Only seek on PLAY if drift exceeds 1.5s to avoid audio clipping / stutter
-    if (Math.abs(videoEl.value.currentTime - target) > 1.5) {
+    // Only seek on PLAY if drift exceeds 2.0s to avoid audio clipping / stutter
+    if (Math.abs(videoEl.value.currentTime - target) > 2.0) {
       videoEl.value.currentTime = Math.max(0, target);
     }
     await safePlay();
@@ -1010,7 +1010,7 @@ async function applySync(data) {
 
   remoteSyncTimer = setTimeout(() => {
     isApplyingRemoteSync = false;
-  }, 400);
+  }, 800);
 }
 
 // ── UI Helpers ────────────────────────────────────────────────────────────
@@ -1294,36 +1294,31 @@ onMounted(async () => {
         return;
       }
 
-      // Smooth Micro-Catchup Engine (Zero-Stutter Playback Rate Ramping)
-      const rawElapsed = serverTime ? Math.max(0, (Date.now() - serverTime) / 1000) : 0;
-      const targetTime = roomTime + Math.min(2.5, rawElapsed);
+      // Smooth Micro-Catchup Engine (Playback Rate Ramping ONLY - No Automatic Seeks in Heartbeat)
       const current = videoEl.value.currentTime;
+      const rawElapsed = serverTime ? Math.max(0, (Date.now() - serverTime) / 1000) : 0;
+      const targetTime = roomTime + Math.min(1.0, rawElapsed);
       const delta = targetTime - current; // positive = we are lagging behind the room
 
-      // Micro-catchup for small lag (0.35s to 2.0s behind)
-      if (delta > 0.35 && delta <= 2.0) {
-        const pbr = Math.min(1.10, +(1.0 + (delta / 14)).toFixed(2));
+      // Micro-catchup for small lag (0.35s to 3.0s behind)
+      if (delta > 0.35 && delta <= 3.0) {
+        const pbr = Math.min(1.08, +(1.0 + (delta / 25)).toFixed(2));
         if (Math.abs(videoEl.value.playbackRate - pbr) > 0.01) {
           logDebug(`Micro-catchup ramping playbackRate -> ${pbr}x (lag: ${delta.toFixed(2)}s)`);
           videoEl.value.playbackRate = pbr;
         }
-      } else if (delta < -0.35 && delta >= -1.5) {
-        // Slightly ahead (0.35s to 1.5s ahead): slow down slightly (0.94x - 0.97x) to let room catch up
-        const pbr = Math.max(0.93, +(1.0 + (delta / 16)).toFixed(2));
+      } else if (delta < -0.35 && delta >= -2.0) {
+        // Slightly ahead: slow down slightly (0.95x - 0.97x) to let room catch up
+        const pbr = Math.max(0.94, +(1.0 + (delta / 25)).toFixed(2));
         if (Math.abs(videoEl.value.playbackRate - pbr) > 0.01) {
           logDebug(`Micro-slowdown ramping playbackRate -> ${pbr}x (ahead: ${(-delta).toFixed(2)}s)`);
           videoEl.value.playbackRate = pbr;
         }
-      } else if (Math.abs(delta) < 0.15) {
+      } else if (Math.abs(delta) < 0.20) {
         // In sync! Reset playback rate to 1.0x
         if (videoEl.value.playbackRate !== 1.0) {
           videoEl.value.playbackRate = 1.0;
         }
-      } else if (delta > 2.0 || delta < -1.5) {
-        // Large discontinuity -> hard seek
-        logDebug(`Discontinuity detected (${delta.toFixed(2)}s) -> seeking to ${targetTime.toFixed(1)}s`);
-        videoEl.value.currentTime = Math.max(0, targetTime);
-        videoEl.value.playbackRate = 1.0;
       }
     }),
 
