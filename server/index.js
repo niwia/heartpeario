@@ -172,11 +172,14 @@ wss.on('connection', (ws, req) => {
             subtitles: [],
             player: { paused: true, time: 0, serverTime: Date.now() },
             clients: new Map([[ws, user]]),
+            tsMap: new Map([[userId, { time: 0, buffering: false, ready: true, updatedAt: Date.now() }]]),
           };
           rooms.set(id, room);
         } else {
           room = rooms.get(id);
           room.clients.set(ws, user);
+          if (!room.tsMap) room.tsMap = new Map();
+          room.tsMap.set(userId, { time: 0, buffering: false, ready: true, updatedAt: Date.now() });
         }
         logServer(`[Room ${id}] Created/Joined by ${user.name} (${userId})`);
 
@@ -218,6 +221,8 @@ wss.on('connection', (ws, req) => {
 
         room = target;
         room.clients.set(ws, user);
+        if (!room.tsMap) room.tsMap = new Map();
+        room.tsMap.set(userId, { time: room.player?.time || 0, buffering: false, ready: true, updatedAt: Date.now() });
         const isHost = room.hostId === userId || room.hostId === 'SYSTEM';
         logServer(`[Room ${id}] ${user.name} joined. Total users: ${room.clients.size}`);
 
@@ -467,6 +472,20 @@ wss.on('connection', (ws, req) => {
         });
         break;
       }
+
+      // ── Client timestamp / buffering heartbeat ───────────────────────────
+      case 'player.ts': {
+        if (!room) break;
+        const { time, buffering, ready } = payload;
+        if (!room.tsMap) room.tsMap = new Map();
+        room.tsMap.set(userId, {
+          time: Math.max(0, parseFloat(time) || 0),
+          buffering: !!buffering,
+          ready: ready !== undefined ? !!ready : true,
+          updatedAt: Date.now(),
+        });
+        break;
+      }
     }
   });
 
@@ -474,6 +493,7 @@ wss.on('connection', (ws, req) => {
     logServer(`Client disconnected: ${user.name} (${userId})`);
     if (!room) return;
     room.clients.delete(ws);
+    if (room.tsMap) room.tsMap.delete(userId);
     broadcastSystemMessage(room, `${user.name} left the room`);
 
     if (room.clients.size === 0) {
@@ -501,6 +521,45 @@ wss.on('connection', (ws, req) => {
     ws.close();
   });
 });
+
+// ── Periodic Room Sync Heartbeat (1s) ─────────────────────────────────────────
+setInterval(() => {
+  const now = Date.now();
+  for (const room of rooms.values()) {
+    if (!room || !room.clients || room.clients.size === 0 || !room.url) continue;
+
+    // Prune stale client timestamp entries
+    if (room.tsMap) {
+      const activeUserIds = new Set(Array.from(room.clients.values()).map(u => u.id));
+      for (const uid of room.tsMap.keys()) {
+        if (!activeUserIds.has(uid)) {
+          room.tsMap.delete(uid);
+        }
+      }
+    }
+
+    // Extrapolate room time if playing
+    let currentRoomTime = room.player?.time || 0;
+    if (room.player && !room.player.paused) {
+      const elapsed = Math.max(0, (now - room.player.serverTime) / 1000);
+      currentRoomTime += elapsed;
+    }
+
+    const tsMapObj = {};
+    if (room.tsMap) {
+      for (const [uid, val] of room.tsMap.entries()) {
+        tsMapObj[uid] = val;
+      }
+    }
+
+    broadcastAll(room, 'room.tsMap', {
+      tsMap: tsMapObj,
+      roomTime: currentRoomTime,
+      paused: room.player?.paused ?? true,
+      serverTime: now,
+    });
+  }
+}, 1000);
 
 server.listen(PORT, '0.0.0.0', () => {
   logServer(`❤️  HeartPeario server running on http://0.0.0.0:${PORT}`);

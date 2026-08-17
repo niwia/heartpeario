@@ -104,9 +104,10 @@
               :key="u.id"
               class="user-dot"
               :style="{ background: u.color }"
-              :title="u.name + (u.id === room.you?.id ? ' (You)' : '')"
+              :title="getPeerSyncTitle(u)"
             >
               {{ u.name.charAt(0).toUpperCase() }}
+              <span class="sync-dot-badge" :class="getPeerSyncBadgeClass(u.id)"></span>
             </span>
           </div>
         </div>
@@ -239,6 +240,12 @@
             <Icon name="play" size="28" />
             <span>Tap to Watch in Sync</span>
           </div>
+        </div>
+
+        <!-- Tap-to-Unmute Banner for Mobile Autoplay Fallback -->
+        <div v-if="needsUserUnmute && !paused && room.url" class="unmute-banner" @click="handleUnmute">
+          <Icon name="mute" size="18" />
+          <span>Playing in sync (Muted) — <strong>Tap to Unmute</strong></span>
         </div>
 
         <!-- Direct URL bar -->
@@ -523,6 +530,8 @@ const activeSubTrackBlobUrl = ref(null);
 const isCasting = ref(false);
 const airplayAvailable = ref(false);
 const needsUserTapToPlay = ref(false);
+const needsUserUnmute = ref(false);
+const roomTsMap = ref({});
 
 // ── Refs ──────────────────────────────────────────────────────────────────
 const videoEl    = ref(null);
@@ -558,10 +567,41 @@ let currentPlayPromise = null;
 let hideTimer = null;
 let toastTimer = null;
 let seekDebounceTimer = null;
+let heartbeatTimer = null;
 
 function logDebug(...args) {
   const ts = new Date().toTimeString().split(' ')[0];
   console.log(`[HeartPeario ${ts}]`, ...args);
+}
+
+// ── Peer Sync Status Helpers ──────────────────────────────────────────────
+function getPeerSyncBadgeClass(userId) {
+  if (userId === room.you?.id) return 'sync-self';
+  const peer = roomTsMap.value[userId];
+  if (!peer) return 'sync-unknown';
+  if (peer.buffering || !peer.ready) return 'sync-buffering';
+  const myTime = videoEl.value?.currentTime || 0;
+  const drift = Math.abs((peer.time || 0) - myTime);
+  if (drift < 1.0) return 'sync-good';
+  if (drift < 3.0) return 'sync-catching-up';
+  return 'sync-lagging';
+}
+
+function getPeerSyncTitle(u) {
+  const isYou = u.id === room.you?.id ? ' (You)' : '';
+  const peer = roomTsMap.value[u.id];
+  if (!peer) return `${u.name}${isYou}`;
+  if (peer.buffering || !peer.ready) return `${u.name}${isYou}: Buffering…`;
+  return `${u.name}${isYou} at ${fmtTime(peer.time || 0)}`;
+}
+
+function handleUnmute() {
+  if (!videoEl.value) return;
+  videoEl.value.muted = false;
+  isMuted.value = false;
+  needsUserUnmute.value = false;
+  videoEl.value.volume = volume.value;
+  doToast('Audio unmuted', 1500);
 }
 
 // ── Promise-Guarded Play & Pause ──────────────────────────────────────────
@@ -571,8 +611,24 @@ async function safePlay() {
   try {
     currentPlayPromise = videoEl.value.play();
     await currentPlayPromise;
+    needsUserUnmute.value = false;
   } catch (err) {
-    if (err.name === 'NotAllowedError') {
+    logDebug(`Play rejected: ${err?.name} - ${err?.message}`);
+    if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') {
+      // Auto-mute fallback to satisfy browser autoplay policy on mobile/Safari
+      if (videoEl.value && !videoEl.value.muted) {
+        logDebug('Autoplay blocked with sound: auto-muting for continuous sync');
+        videoEl.value.muted = true;
+        isMuted.value = true;
+        try {
+          currentPlayPromise = videoEl.value.play();
+          await currentPlayPromise;
+          needsUserUnmute.value = true;
+          return;
+        } catch (e2) {
+          logDebug(`Muted autoplay also blocked: ${e2?.message}`);
+        }
+      }
       needsUserTapToPlay.value = true;
     }
   } finally {
@@ -926,6 +982,7 @@ async function applySync(data) {
   logDebug(`ApplySync #${data.seq || 0}: ${data.paused ? 'PAUSE' : 'PLAY'} target=${fmtTime(target)} (${target.toFixed(1)}s, drift: ${drift.toFixed(2)}s, rawElapsed: ${rawElapsed.toFixed(2)}s)`);
 
   if (data.paused) {
+    if (videoEl.value.playbackRate !== 1.0) videoEl.value.playbackRate = 1.0;
     await safePause();
     if (Math.abs(videoEl.value.currentTime - target) > 0.3) {
       videoEl.value.currentTime = Math.max(0, target);
@@ -939,8 +996,8 @@ async function applySync(data) {
   } else {
     justUnpausedTimestamp = Date.now();
     roomReadiness.value.waiting = false;
-    // Only seek if drift exceeds 1.0s to avoid audio clipping / stutter
-    if (Math.abs(videoEl.value.currentTime - target) > 1.0) {
+    // Only seek on PLAY if drift exceeds 1.5s to avoid audio clipping / stutter
+    if (Math.abs(videoEl.value.currentTime - target) > 1.5) {
       videoEl.value.currentTime = Math.max(0, target);
     }
     await safePlay();
@@ -1227,6 +1284,49 @@ onMounted(async () => {
       room.addMessage(msg);
     }),
 
+    socket.on('room.tsMap', ({ tsMap, roomTime, paused: isRoomPaused, serverTime }) => {
+      roomTsMap.value = tsMap || {};
+
+      if (!videoEl.value || paused.value || isRoomPaused || isApplyingRemoteSync || isUserScrubbing.value || !room.url) {
+        if (videoEl.value && videoEl.value.playbackRate !== 1.0) {
+          videoEl.value.playbackRate = 1.0;
+        }
+        return;
+      }
+
+      // Smooth Micro-Catchup Engine (Zero-Stutter Playback Rate Ramping)
+      const rawElapsed = serverTime ? Math.max(0, (Date.now() - serverTime) / 1000) : 0;
+      const targetTime = roomTime + Math.min(2.5, rawElapsed);
+      const current = videoEl.value.currentTime;
+      const delta = targetTime - current; // positive = we are lagging behind the room
+
+      // Micro-catchup for small lag (0.35s to 2.0s behind)
+      if (delta > 0.35 && delta <= 2.0) {
+        const pbr = Math.min(1.10, +(1.0 + (delta / 14)).toFixed(2));
+        if (Math.abs(videoEl.value.playbackRate - pbr) > 0.01) {
+          logDebug(`Micro-catchup ramping playbackRate -> ${pbr}x (lag: ${delta.toFixed(2)}s)`);
+          videoEl.value.playbackRate = pbr;
+        }
+      } else if (delta < -0.35 && delta >= -1.5) {
+        // Slightly ahead (0.35s to 1.5s ahead): slow down slightly (0.94x - 0.97x) to let room catch up
+        const pbr = Math.max(0.93, +(1.0 + (delta / 16)).toFixed(2));
+        if (Math.abs(videoEl.value.playbackRate - pbr) > 0.01) {
+          logDebug(`Micro-slowdown ramping playbackRate -> ${pbr}x (ahead: ${(-delta).toFixed(2)}s)`);
+          videoEl.value.playbackRate = pbr;
+        }
+      } else if (Math.abs(delta) < 0.15) {
+        // In sync! Reset playback rate to 1.0x
+        if (videoEl.value.playbackRate !== 1.0) {
+          videoEl.value.playbackRate = 1.0;
+        }
+      } else if (delta > 2.0 || delta < -1.5) {
+        // Large discontinuity -> hard seek
+        logDebug(`Discontinuity detected (${delta.toFixed(2)}s) -> seeking to ${targetTime.toFixed(1)}s`);
+        videoEl.value.currentTime = Math.max(0, targetTime);
+        videoEl.value.playbackRate = 1.0;
+      }
+    }),
+
     socket.on('error', (err) => {
       if (err.message === 'Room not found') {
         roomNotFound.value = true;
@@ -1237,9 +1337,20 @@ onMounted(async () => {
     }),
   ];
 
+  heartbeatTimer = setInterval(() => {
+    if (videoEl.value && room.url) {
+      socket.send('player.ts', {
+        time: videoEl.value.currentTime,
+        buffering: buffering.value,
+        ready: !buffering.value && videoEl.value.readyState >= 3,
+      });
+    }
+  }, 1000);
+
   onUnmounted(() => {
     offs.forEach(off => off());
     document.removeEventListener('keydown', onKeyDown);
+    if (heartbeatTimer) clearInterval(heartbeatTimer);
     clearTimeout(hideTimer);
     clearTimeout(toastTimer);
     clearTimeout(remoteSyncTimer);
@@ -1526,8 +1637,38 @@ onMounted(async () => {
   font-size: 0.6rem;
   font-weight: 700;
   color: #fff;
+  position: relative;
 }
 .user-dot:first-child { margin-left: 0; }
+
+.sync-dot-badge {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--surface);
+}
+.sync-dot-badge.sync-good {
+  background: #22c55e;
+  box-shadow: 0 0 4px #22c55e;
+}
+.sync-dot-badge.sync-catching-up {
+  background: #eab308;
+  animation: pulse-sync 1.2s infinite ease-in-out;
+}
+.sync-dot-badge.sync-buffering {
+  background: #ef4444;
+  animation: pulse-sync 0.8s infinite ease-in-out;
+}
+.sync-dot-badge.sync-self, .sync-dot-badge.sync-unknown {
+  display: none;
+}
+@keyframes pulse-sync {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.3); }
+}
 
 .user-chip-btn {
   display: flex;
@@ -1767,6 +1908,38 @@ video {
   transition: transform 0.15s;
 }
 .tap-play-btn:hover { transform: scale(1.05); }
+
+/* Tap-to-Unmute Banner for Mobile Autoplay Fallback */
+.unmute-banner {
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(22, 22, 32, 0.95);
+  border: 1px solid rgba(245, 166, 35, 0.5);
+  color: var(--gold);
+  padding: 9px 18px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  z-index: 35;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(12px);
+  animation: slide-up 0.3s ease both;
+  transition: transform 0.15s, background 0.15s;
+}
+.unmute-banner:hover {
+  transform: translateX(-50%) scale(1.03);
+  background: rgba(30, 30, 44, 0.98);
+}
+.unmute-banner strong {
+  color: #fff;
+  text-decoration: underline;
+}
 
 /* Media Title Top Overlay */
 .media-title-overlay {
