@@ -300,6 +300,7 @@ onMounted(() => {
 }
 
 .modal-header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -346,49 +347,55 @@ onMounted(() => {
 }
 
 .source-media-bar {
+  flex-shrink: 0;
   display: flex;
   align-items: baseline;
   gap: 6px;
   padding: 8px 20px;
   background: var(--surface2);
   border-bottom: 1px solid var(--border);
-  font-size: 0.8rem;
+  font-size: 0.82rem;
 }
 .sm-title { font-weight: 700; color: #ffffff; }
 .sm-ep { color: rgba(255, 255, 255, 0.85); }
 .sm-year { color: var(--muted); }
 
 .addon-filter-tabs-bar {
+  flex-shrink: 0;
   display: flex;
-  gap: 6px;
-  padding: 8px 20px;
-  background: var(--surface);
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #14141d;
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
 }
 .addon-filter-btn {
-  padding: 4px 10px;
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: var(--radius-sm);
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   font-weight: 600;
-  color: var(--muted);
+  color: rgba(255, 255, 255, 0.85);
   white-space: nowrap;
   cursor: pointer;
   transition: all 0.15s;
 }
 .addon-filter-btn:hover {
   color: #ffffff;
-  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.4);
 }
 .addon-filter-btn.active {
-  background: rgba(255, 255, 255, 0.1);
+  background: #ffffff;
   border-color: #ffffff;
-  color: #ffffff;
+  color: #0c0c12;
 }
 
 .modal-body {
+  flex: 1;
+  min-height: 0;
   padding: 16px 20px;
   overflow-y: auto;
   display: flex;
@@ -576,6 +583,7 @@ onMounted(() => {
 }
 
 .modal-footer {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;

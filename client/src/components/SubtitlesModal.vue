@@ -50,10 +50,10 @@
             </button>
           </div>
 
-          <!-- Section 1: Stream Provided Subtitles (Top Priority) -->
+          <!-- Case 1: Stream Provided Subtitles (Shown when stream has subtitles) -->
           <div v-if="streamSubtitles.length" class="subs-sub-group">
             <div class="subs-header">
-              <span class="section-label">From Selected Stream ({{ streamSubtitles.length }})</span>
+              <span class="section-label">Subtitles from Selected Stream ({{ streamSubtitles.length }})</span>
             </div>
             <div class="subs-list">
               <button
@@ -71,12 +71,19 @@
                 <Icon v-if="currentSubtitle?.url === sub.url" name="check" size="16" />
               </button>
             </div>
+
+            <!-- Optional button if user wants to search OpenSubtitles anyway -->
+            <div v-if="!showExternalAddonSubs" class="external-subs-toggle">
+              <button class="btn-toggle-external" @click="fetchExternalSubs">
+                Search OpenSubtitles / External Addons
+              </button>
+            </div>
           </div>
 
-          <!-- Section 2: Online Addon Subtitles -->
-          <div class="subs-sub-group">
+          <!-- Case 2: Online Addon Subtitles (Shown if stream has no subtitles OR user requested them) -->
+          <div v-if="!streamSubtitles.length || showExternalAddonSubs" class="subs-sub-group">
             <div class="subs-header">
-              <span class="section-label">Online Addon Subtitles ({{ addonSubtitles.length }})</span>
+              <span class="section-label">OpenSubtitles & Addons ({{ addonSubtitles.length }})</span>
               <span v-if="loadingRemoteSubs" class="spinner-sm"></span>
             </div>
 
@@ -147,6 +154,7 @@ const fileInputEl = ref(null);
 const isDragging = ref(false);
 const dynamicSubs = ref([]);
 const loadingRemoteSubs = ref(false);
+const showExternalAddonSubs = ref(false);
 
 const effectiveSubs = computed(() => {
   const list = (props.availableSubtitles?.length ? props.availableSubtitles : props.availableSubs) || [];
@@ -197,20 +205,26 @@ function handleCustomFile(file) {
   reader.readAsText(file);
 }
 
+async function fetchExternalSubs() {
+  showExternalAddonSubs.value = true;
+  if (!props.mediaMeta?.id || dynamicSubs.value.length > 0) return;
+  loadingRemoteSubs.value = true;
+  try {
+    const type = props.mediaMeta.type || 'movie';
+    await fetchSubtitlesProgressive(addonsStore.subtitleAddons, type, props.mediaMeta.id, (chunk) => {
+      dynamicSubs.value.push(...chunk);
+    });
+  } catch {
+    /* ignore */
+  } finally {
+    loadingRemoteSubs.value = false;
+  }
+}
+
 onMounted(async () => {
-  // If no addon subtitles were passed but we have media metadata (e.g. IMDb ID), fetch on demand
-  if (addonSubtitles.value.length === 0 && props.mediaMeta?.id) {
-    loadingRemoteSubs.value = true;
-    try {
-      const type = props.mediaMeta.type || 'movie';
-      await fetchSubtitlesProgressive(addonsStore.subtitleAddons, type, props.mediaMeta.id, (chunk) => {
-        dynamicSubs.value.push(...chunk);
-      });
-    } catch {
-      /* ignore */
-    } finally {
-      loadingRemoteSubs.value = false;
-    }
+  // Only query external subtitle addons automatically if the stream DOES NOT have its own embedded subtitles!
+  if (streamSubtitles.value.length === 0 && props.mediaMeta?.id) {
+    fetchExternalSubs();
   }
 });
 </script>
@@ -230,8 +244,8 @@ onMounted(async () => {
 }
 
 .modal-card {
-  width: min(500px, 100%);
-  max-height: 82vh;
+  width: min(480px, 100%);
+  max-height: 80vh;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -242,6 +256,7 @@ onMounted(async () => {
 }
 
 .modal-header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -279,6 +294,8 @@ onMounted(async () => {
 }
 
 .modal-body {
+  flex: 1;
+  min-height: 0;
   padding: 16px 20px;
   overflow-y: auto;
   display: flex;
@@ -287,17 +304,17 @@ onMounted(async () => {
 }
 
 .drop-zone {
-  border: 1px dashed rgba(255, 255, 255, 0.25);
+  border: 1px dashed var(--border);
   border-radius: var(--radius-sm);
-  padding: 16px;
+  padding: 14px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  cursor: pointer;
-  background: rgba(255, 255, 255, 0.02);
-  transition: all 0.15s;
+  gap: 6px;
+  background: var(--surface2);
   color: var(--muted);
 }
 .drop-zone:hover, .drop-zone.dragging {
@@ -306,19 +323,18 @@ onMounted(async () => {
   color: #ffffff;
 }
 .drop-text {
-  font-size: 0.82rem;
+  font-size: 0.78rem;
+  margin: 0;
 }
 .drop-text code {
-  background: var(--surface2);
-  padding: 2px 5px;
-  border-radius: 3px;
   color: #ffffff;
+  font-weight: 600;
 }
 
 .subs-section {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .subs-sub-group {
@@ -333,7 +349,7 @@ onMounted(async () => {
   justify-content: space-between;
 }
 .section-label {
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -343,39 +359,29 @@ onMounted(async () => {
 .subs-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .sub-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 9px 14px;
+  padding: 9px 12px;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: #ffffff;
-  font-size: 0.84rem;
-  font-weight: 500;
   cursor: pointer;
+  font-size: 0.84rem;
   transition: all 0.15s;
 }
 .sub-item:hover {
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 .sub-item.active {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.14);
   border-color: #ffffff;
-}
-
-.stream-sub-item {
-  border-color: rgba(61, 190, 122, 0.3);
-  background: rgba(61, 190, 122, 0.05);
-}
-.stream-sub-item:hover {
-  border-color: rgba(61, 190, 122, 0.6);
-  background: rgba(61, 190, 122, 0.1);
 }
 
 .sub-info {
@@ -384,42 +390,57 @@ onMounted(async () => {
   gap: 8px;
 }
 .sub-lang {
-  font-weight: 600;
-  color: #ffffff;
+  font-weight: 500;
 }
 .sub-code {
   font-size: 0.68rem;
-  font-weight: 800;
+  font-weight: 700;
   color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 4px;
+  border-radius: 3px;
 }
 .stream-badge {
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 800;
-  background: rgba(61, 190, 122, 0.2);
   color: #3dbe7a;
-  border: 1px solid rgba(61, 190, 122, 0.4);
-  padding: 1px 5px;
+  background: rgba(61, 190, 122, 0.15);
+  border: 1px solid rgba(61, 190, 122, 0.35);
+  padding: 1px 4px;
   border-radius: 3px;
   letter-spacing: 0.03em;
 }
 .sub-addon-tag {
-  font-size: 0.68rem;
+  font-size: 0.65rem;
   color: var(--muted);
-  background: rgba(255, 255, 255, 0.06);
-  padding: 1px 5px;
-  border-radius: 3px;
+}
+
+.external-subs-toggle {
+  margin-top: 4px;
+}
+.btn-toggle-external {
+  font-size: 0.76rem;
+  color: var(--muted);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.15s;
+}
+.btn-toggle-external:hover {
+  color: #ffffff;
 }
 
 .no-subs {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--muted);
+  padding: 8px;
   text-align: center;
-  padding: 14px;
-  background: rgba(255, 255, 255, 0.02);
-  border-radius: var(--radius-sm);
 }
 
 .modal-footer {
+  flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
   padding: 12px 20px;
@@ -432,7 +453,7 @@ onMounted(async () => {
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: var(--radius-sm);
-  font-size: 0.86rem;
+  font-size: 0.84rem;
   font-weight: 600;
   color: #ffffff;
   cursor: pointer;
@@ -444,7 +465,7 @@ onMounted(async () => {
 }
 
 .spinner-sm {
-  width: 14px; height: 14px;
+  width: 12px; height: 12px;
   border: 2px solid rgba(255, 255, 255, 0.2);
   border-top-color: #ffffff;
   border-radius: 50%;

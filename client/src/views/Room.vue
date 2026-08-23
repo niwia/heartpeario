@@ -73,6 +73,14 @@
             </div>
 
             <div class="popover-actions">
+              <button v-if="recentStreams.length" class="btn-popover-action" @click="showRecentModal = true; showRoomCodeMenu = false">
+                <Icon name="history" size="14" />
+                <span>Recent Streams ({{ recentStreams.length }})</span>
+              </button>
+              <button v-if="room.url && room.isHost" class="btn-popover-action" @click="unloadCurrentVideo(); showRoomCodeMenu = false">
+                <Icon name="stop" size="14" />
+                <span>Back to Room Cinema Screen</span>
+              </button>
               <button class="btn-popover-action" @click="copyRoomLink">
                 <Icon :name="copied ? 'check' : 'link'" size="14" />
                 <span>{{ copied ? 'Link Copied!' : 'Copy Invite Link' }}</span>
@@ -106,6 +114,16 @@
         <button class="header-btn" @click="showSearchModal = true" title="Search Movies & Shows with Stremio Addons">
           <Icon name="search" size="15" />
           <span>Search</span>
+        </button>
+
+        <button
+          v-if="recentStreams.length"
+          class="header-btn"
+          @click="showRecentModal = true"
+          title="Continue Watching / Last Played Media"
+        >
+          <Icon name="history" size="15" />
+          <span>Recent ({{ recentStreams.length }})</span>
         </button>
       </div>
 
@@ -566,6 +584,17 @@
       @load-custom="onLoadCustomSubtitle"
     />
 
+    <RecentMediaModal
+      v-if="showRecentModal"
+      :recent-streams="recentStreams"
+      :current-url="room.url || ''"
+      :is-host="room.isHost"
+      @close="showRecentModal = false"
+      @resume="resumeRecentStream"
+      @remove="removeRecentStream"
+      @unload="unloadCurrentVideo"
+    />
+
   </div>
 </template>
 
@@ -584,6 +613,7 @@ import SettingsModal from '@/components/SettingsModal.vue';
 import SourcesModal from '@/components/SourcesModal.vue';
 import AudioTracksModal from '@/components/AudioTracksModal.vue';
 import SubtitlesModal from '@/components/SubtitlesModal.vue';
+import RecentMediaModal from '@/components/RecentMediaModal.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -595,6 +625,7 @@ const showSearchModal = ref(false);
 const showSettingsModal = ref(false);
 const settingsInitialTab = ref('addons');
 const showSourcesModal = ref(false);
+const showRecentModal = ref(false);
 const showAudioModal = ref(false);
 const showSubtitlesModal = ref(false);
 const showJoinPrompt = ref(false);
@@ -1176,7 +1207,11 @@ async function onStreamSelected({ url, mediaMeta, subtitles, sources }) {
   });
 
   if (subtitles?.length) {
-    const defaultSub = subtitles.find(s => ['eng', 'en'].includes(s.lang?.toLowerCase())) || subtitles[0];
+    // Pick stream-provided subtitle first if available, otherwise fallback to english/first
+    const defaultSub = subtitles.find(s => s.isStreamSub && ['eng', 'en'].includes(s.lang?.toLowerCase()))
+      || subtitles.find(s => s.isStreamSub)
+      || subtitles.find(s => ['eng', 'en'].includes(s.lang?.toLowerCase()))
+      || subtitles[0];
     room.currentSubtitle = defaultSub;
     loadCurrentSubtitle();
   }
@@ -1215,12 +1250,40 @@ function onSelectSource(source) {
   const streamUrl = source.url || source.externalUrl;
   if (!streamUrl) return;
 
+  let streamSubs = [];
+  if (source.subtitles && Array.isArray(source.subtitles) && source.subtitles.length > 0) {
+    streamSubs = source.subtitles.map((sub, idx) => ({
+      id: `stream-sub-${idx}`,
+      url: sub.url,
+      lang: sub.lang || sub.id || 'eng',
+      langName: `${(sub.lang || 'eng').toUpperCase()} (${source.addonName || 'Stream'})`,
+      isStreamSub: true,
+      addonName: source.addonName,
+    }));
+  }
+
+  // Combine stream-provided subtitles (at the top) with remaining addon subtitles
+  const combined = [...streamSubs, ...(room.subtitles || []).filter(s => !s.isStreamSub)];
+
   onStreamSelected({
     url: streamUrl,
     mediaMeta: room.mediaMeta,
-    subtitles: room.subtitles,
+    subtitles: combined,
     sources: cachedSources.value,
   });
+}
+
+function unloadCurrentVideo() {
+  if (!room.isHost) {
+    doToast('Only the Room Host can unload the current video');
+    return;
+  }
+  room.url = null;
+  room.mediaMeta = null;
+  room.subtitles = [];
+  room.currentSubtitle = null;
+  socket.send('player.url', { url: null, mediaMeta: null, subtitles: [] });
+  doToast('Returned to Room Cinema screen');
 }
 
 function openSearchFromSources() {
