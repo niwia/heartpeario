@@ -263,6 +263,7 @@
           @click="togglePlay"
           @timeupdate="onTimeUpdate"
           @durationchange="onDurationChange"
+          @loadedmetadata="updateAudioTracks"
           @waiting="onWaiting"
           @canplay="onCanPlay"
           @playing="onPlaying"
@@ -307,9 +308,8 @@
           <div class="buf-spinner"></div>
         </div>
 
-        <!-- ── 3-Second Synchronized Countdown Status (Bottom Left Text Line) ── -->
+        <!-- ── 3-Second Synchronized Countdown Status (Bottom Left Pure Text Line, No Background) ── -->
         <div v-if="room.activeCountdown && room.url" class="countdown-bottom-indicator">
-          <span class="countdown-dot"></span>
           <span class="countdown-text">{{ countdownBottomText }}</span>
           <button
             v-if="canCancelCountdown"
@@ -429,6 +429,15 @@
               </div>
 
               <div class="controls-right">
+                <!-- Audio Tracks Button -->
+                <button
+                  class="ctrl-btn"
+                  @click="openAudioModal"
+                  title="Select Audio Track"
+                >
+                  <Icon name="volume" size="18" />
+                </button>
+
                 <!-- Subtitles Button -->
                 <button
                   class="ctrl-btn"
@@ -534,15 +543,20 @@
       @close="showAddonsModal = false"
     />
 
+    <AudioTracksModal
+      v-if="showAudioModal"
+      :audio-tracks="detectedAudioTracks"
+      @close="showAudioModal = false"
+      @select="onSelectAudioTrack"
+    />
+
     <SubtitlesModal
       v-if="showSubtitlesModal"
       :available-subtitles="room.subtitles"
       :current-subtitle="room.currentSubtitle"
-      :offset-ms="room.subtitleOffsetMs"
       :media-meta="room.mediaMeta"
       @close="showSubtitlesModal = false"
       @select="onSelectSubtitle"
-      @set-offset="onSetSubtitleOffset"
       @load-custom="onLoadCustomSubtitle"
     />
 
@@ -569,6 +583,7 @@ import Icon from '@/components/Icon.vue';
 import SearchMediaModal from '@/components/SearchMediaModal.vue';
 import AddonManagerModal from '@/components/AddonManagerModal.vue';
 import SubtitlesModal from '@/components/SubtitlesModal.vue';
+import AudioTracksModal from '@/components/AudioTracksModal.vue';
 import ProfileModal from '@/components/ProfileModal.vue';
 
 const route = useRoute();
@@ -580,6 +595,7 @@ const profileStore = useProfileStore();
 const showSearchModal = ref(false);
 const showAddonsModal = ref(false);
 const showSubtitlesModal = ref(false);
+const showAudioModal = ref(false);
 const showProfileModal = ref(false);
 const showJoinPrompt = ref(false);
 const showRenameModal = ref(false);
@@ -587,6 +603,8 @@ const showUsersMenu = ref(false);
 const joinNameInput = ref('');
 const renameInput = ref('');
 const joinNameInputEl = ref(null);
+
+const detectedAudioTracks = ref([]);
 
 const cleanRouteCode = computed(() => {
   return (route.params.roomId || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
@@ -841,6 +859,37 @@ function toggleFullscreen() {
   }
 }
 
+function updateAudioTracks() {
+  const tracks = [];
+  if (videoEl.value?.audioTracks) {
+    for (let i = 0; i < videoEl.value.audioTracks.length; i++) {
+      const t = videoEl.value.audioTracks[i];
+      tracks.push({
+        index: i,
+        id: t.id || `track-${i}`,
+        label: t.label || t.language || `Audio Track ${i + 1}`,
+        language: t.language || '',
+        enabled: t.enabled,
+      });
+    }
+  }
+  detectedAudioTracks.value = tracks;
+}
+
+function openAudioModal() {
+  updateAudioTracks();
+  showAudioModal.value = true;
+}
+
+function onSelectAudioTrack(index) {
+  if (!videoEl.value || !videoEl.value.audioTracks) return;
+  for (let i = 0; i < videoEl.value.audioTracks.length; i++) {
+    videoEl.value.audioTracks[i].enabled = (i === index);
+  }
+  updateAudioTracks();
+  doToast(`Audio: ${detectedAudioTracks.value[index]?.label || 'Selected'}`);
+}
+
 function onTimeUpdate() {
   if (!isUserScrubbing.value && videoEl.value) {
     currentTime.value = videoEl.value.currentTime;
@@ -853,7 +902,10 @@ function onTimeUpdate() {
 }
 
 function onDurationChange() {
-  if (videoEl.value) duration.value = videoEl.value.duration;
+  if (videoEl.value) {
+    duration.value = videoEl.value.duration;
+    updateAudioTracks();
+  }
 }
 
 function onWaiting() {
@@ -870,6 +922,7 @@ function onCanPlay() {
   if (videoEl.value) {
     videoEl.value.volume = isMuted.value ? 0 : volume.value;
     videoEl.value.muted = isMuted.value;
+    updateAudioTracks();
   }
 }
 
@@ -944,7 +997,7 @@ async function loadCurrentSubtitle() {
     return;
   }
   try {
-    const vttUrl = await createVttUrlFromRemote(room.currentSubtitle.url, room.subtitleOffsetMs);
+    const vttUrl = await createVttUrlFromRemote(room.currentSubtitle.url, room.subtitleOffsetMs || 0);
     if (activeSubTrackBlobUrl.value) URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = vttUrl;
   } catch (err) {
@@ -966,7 +1019,7 @@ function onSetSubtitleOffset(offsetMs) {
 
 function onLoadCustomSubtitle({ name, content }) {
   try {
-    const vtt = srtToVtt(content, room.subtitleOffsetMs);
+    const vtt = srtToVtt(content, room.subtitleOffsetMs || 0);
     const blob = new Blob([vtt], { type: 'text/vtt' });
     const url = URL.createObjectURL(blob);
     if (activeSubTrackBlobUrl.value) URL.revokeObjectURL(activeSubTrackBlobUrl.value);
@@ -1163,7 +1216,7 @@ function scrollMessages() {
 // ── Keyboard Shortcuts ────────────────────────────────────────────────────
 function onKeyDown(e) {
   if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-  if (showSearchModal.value || showAddonsModal.value || showSubtitlesModal.value || showProfileModal.value || showJoinPrompt.value || showRenameModal.value || roomNotFound.value) return;
+  if (showSearchModal.value || showAddonsModal.value || showSubtitlesModal.value || showAudioModal.value || showProfileModal.value || showJoinPrompt.value || showRenameModal.value || roomNotFound.value) return;
 
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   if (e.code === 'KeyF') toggleFullscreen();
@@ -1285,6 +1338,7 @@ onMounted(async () => {
       nextTick(() => {
         if (videoEl.value) {
           videoEl.value.load();
+          updateAudioTracks();
         }
       });
 
@@ -1458,16 +1512,20 @@ onMounted(async () => {
 .btn-return-home {
   display: block;
   width: 100%;
-  padding: 12px 20px;
-  background: #ffffff;
+  padding: 11px 20px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: var(--radius-sm);
-  font-size: 0.92rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  color: #000000;
+  color: #ffffff;
   text-align: center;
-  transition: opacity 0.15s, transform 0.1s;
+  transition: all 0.15s;
 }
-.btn-return-home:hover { opacity: 0.9; transform: translateY(-1px); }
+.btn-return-home:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+}
 
 /* ── Join / Rename Overlays ─────────────────────────────────────────────── */
 .join-overlay {
@@ -1526,15 +1584,20 @@ onMounted(async () => {
 .join-form input:focus { border-color: #ffffff; }
 
 .btn-join-room {
-  padding: 11px 20px;
-  background: #ffffff;
+  padding: 10px 20px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: var(--radius-sm);
-  font-size: 0.92rem;
+  font-size: 0.9rem;
   font-weight: 600;
-  color: #000000;
-  transition: opacity 0.15s;
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s;
 }
-.btn-join-room:hover:not(:disabled) { opacity: 0.9; }
+.btn-join-room:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+}
 
 .rename-actions {
   display: flex;
@@ -1543,13 +1606,14 @@ onMounted(async () => {
 }
 .btn-cancel {
   padding: 8px 16px;
-  background: var(--surface2);
+  background: transparent;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
   color: var(--muted);
+  cursor: pointer;
 }
-.btn-cancel:hover { color: #fff; border-color: var(--border-light); }
+.btn-cancel:hover { color: #fff; border-color: rgba(255, 255, 255, 0.35); }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .header {
@@ -1604,8 +1668,9 @@ onMounted(async () => {
   position: absolute;
   top: 100%; left: 50%;
   transform: translateX(-50%) translateY(6px);
-  background: #ffffff;
-  color: #000000;
+  background: var(--surface2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
   font-size: 0.72rem;
   font-weight: 700;
   padding: 3px 8px;
@@ -1619,8 +1684,8 @@ onMounted(async () => {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: var(--radius-sm);
   color: #ffffff;
   font-size: 0.82rem;
@@ -1628,7 +1693,7 @@ onMounted(async () => {
   transition: all 0.15s;
   cursor: pointer;
 }
-.header-btn:hover { border-color: rgba(255, 255, 255, 0.4); background: rgba(255, 255, 255, 0.08); }
+.header-btn:hover { border-color: #ffffff; background: rgba(255, 255, 255, 0.08); }
 
 /* Host Pill in Header */
 .host-pill {
@@ -1645,7 +1710,7 @@ onMounted(async () => {
 }
 .host-pill.is-you {
   border-color: rgba(255, 255, 255, 0.35);
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
 }
 .host-pill-tag {
   font-size: 0.65rem;
@@ -1666,8 +1731,8 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
   padding: 5px 12px;
   border-radius: var(--radius-sm);
   font-size: 0.8rem;
@@ -1676,7 +1741,7 @@ onMounted(async () => {
   cursor: pointer;
   transition: all 0.15s;
 }
-.users-pill:hover { border-color: rgba(255, 255, 255, 0.35); background: rgba(255, 255, 255, 0.06); }
+.users-pill:hover { border-color: #ffffff; background: rgba(255, 255, 255, 0.08); }
 .user-count { font-weight: 600; color: #fff; }
 
 /* Users Dropdown Menu */
@@ -1771,18 +1836,17 @@ onMounted(async () => {
 }
 .btn-make-host {
   padding: 3px 8px;
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 4px;
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--muted);
+  color: #ffffff;
   cursor: pointer;
   transition: all 0.15s;
 }
 .btn-make-host:hover {
-  background: #ffffff;
-  color: #000000;
+  background: rgba(255, 255, 255, 0.15);
   border-color: #ffffff;
 }
 
@@ -1790,17 +1854,17 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   font-size: 0.82rem;
   font-weight: 600;
   color: #fff;
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: all 0.15s;
 }
-.user-chip-btn:hover { border-color: rgba(255, 255, 255, 0.35); }
+.user-chip-btn:hover { border-color: #ffffff; background: rgba(255, 255, 255, 0.08); }
 .user-color-dot { width: 8px; height: 8px; border-radius: 50%; }
 
 .vault-mini-tag {
@@ -1828,8 +1892,8 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   width: 34px; height: 34px;
-  background: var(--surface2);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: var(--radius-sm);
   color: #fff;
   cursor: pointer;
@@ -1837,8 +1901,8 @@ onMounted(async () => {
 }
 .icon-btn:hover, .icon-btn.active {
   color: #fff;
-  border-color: rgba(255, 255, 255, 0.4);
-  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+  background: rgba(255, 255, 255, 0.08);
 }
 .badge {
   position: absolute;
@@ -2085,21 +2149,23 @@ onMounted(async () => {
   transition: all 0.15s;
 }
 .btn-ph-action.btn-main {
-  background: #ffffff;
-  color: #000000;
-  border: 1px solid #ffffff;
+  background: transparent;
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.4);
 }
 .btn-ph-action.btn-main:hover {
-  opacity: 0.9;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
   transform: translateY(-1px);
 }
 .btn-ph-action.btn-sub {
-  background: var(--surface2);
+  background: transparent;
   border: 1px solid var(--border);
   color: #ffffff;
 }
 .btn-ph-action.btn-sub:hover {
-  border-color: rgba(255, 255, 255, 0.35);
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.05);
   transform: translateY(-1px);
 }
 
@@ -2121,48 +2187,39 @@ onMounted(async () => {
   animation: spin 0.8s linear infinite;
 }
 
-/* ── 3-Second Synchronized Action Countdown (Bottom Left Text Line) ──────── */
+/* ── 3-Second Synchronized Action Countdown (Bottom Left Pure Text Line, No Background) ── */
 .countdown-bottom-indicator {
   position: absolute;
-  bottom: 60px;
+  bottom: 54px;
   left: 20px;
-  background: rgba(10, 10, 15, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  padding: 6px 14px;
-  border-radius: var(--radius-sm);
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  box-shadow: none !important;
   display: flex;
   align-items: center;
-  gap: 10px;
-  backdrop-filter: blur(12px);
+  gap: 8px;
   z-index: 25;
+  pointer-events: auto;
   animation: fade-in 0.15s ease both;
 }
-.countdown-dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: #ffffff;
-  box-shadow: 0 0 8px #ffffff;
-  animation: blink-pulse 1s infinite ease-in-out;
-}
-@keyframes blink-pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
-}
 .countdown-text {
-  font-size: 0.85rem;
+  font-size: 0.88rem;
   font-weight: 600;
   color: #ffffff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.8);
   letter-spacing: 0.01em;
 }
 .btn-cancel-text {
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   font-weight: 700;
-  color: var(--muted);
+  color: #aaaaaa;
   background: none;
   border: none;
   text-decoration: underline;
   cursor: pointer;
-  margin-left: 4px;
+  margin-left: 2px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
 }
 .btn-cancel-text:hover {
   color: #ffffff;
@@ -2217,17 +2274,20 @@ onMounted(async () => {
 .url-bar input:focus { outline: none; }
 .btn-load-url {
   padding: 6px 16px;
-  background: #ffffff;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
   font-weight: 600;
-  color: #000000;
-  border: none;
+  color: #ffffff;
   flex-shrink: 0;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: all 0.15s;
 }
-.btn-load-url:hover:not(:disabled) { opacity: 0.9; }
+.btn-load-url:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+}
 .btn-close-url {
   background: none;
   border: none;
@@ -2486,14 +2546,17 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   width: 36px; height: 36px;
-  background: #ffffff;
-  border: none;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: var(--radius-sm);
-  color: #000000;
+  color: #ffffff;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: all 0.15s;
 }
-.btn-send:hover:not(:disabled) { opacity: 0.9; }
+.btn-send:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+}
 .btn-send:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* ── Toast ───────────────────────────────────────────────────────────────── */

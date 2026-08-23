@@ -57,8 +57,14 @@
             </button>
           </div>
 
+          <!-- Loading State while searching -->
+          <div v-if="searching" class="search-loading-state">
+            <div class="search-spinner"></div>
+            <p class="loading-txt">Searching catalogs for "{{ searchQuery }}"...</p>
+          </div>
+
           <!-- Results Grid -->
-          <div v-if="currentResults.length" class="results-grid">
+          <div v-else-if="currentResults.length" class="results-grid">
             <div
               v-for="item in currentResults"
               :key="item.id"
@@ -141,7 +147,7 @@
             <div class="streams-header">
               <h4>Available Streams</h4>
               <span v-if="loadingStreams" class="spinner sm"></span>
-              <span v-else class="streams-count">{{ availableStreams.length }} stream(s) found</span>
+              <span class="streams-count">{{ availableStreams.length }} stream(s) found</span>
             </div>
 
             <div v-if="availableStreams.length" class="streams-list">
@@ -173,6 +179,11 @@
               <p>No playable streams found for this title from your active addons.</p>
               <p class="no-streams-sub">Make sure your addons are installed in the Addons manager.</p>
             </div>
+
+            <div v-else class="streams-loading-box">
+              <div class="search-spinner"></div>
+              <p>Fetching streams and subtitles from your addons...</p>
+            </div>
           </div>
 
         </div>
@@ -185,7 +196,7 @@
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue';
 import { useAddonsStore } from '@/stores/addons';
-import { searchCatalog, getMeta, fetchStreams, fetchSubtitles } from '@/services/stremio.service';
+import { searchCatalog, getMeta, fetchStreamsProgressive, fetchSubtitlesProgressive } from '@/services/stremio.service';
 import Icon from '@/components/Icon.vue';
 
 const emit = defineEmits(['close', 'selectStream']);
@@ -246,7 +257,7 @@ function onSearchInput() {
     } finally {
       searching.value = false;
     }
-  }, 300);
+  }, 250);
 }
 
 function clearSearch() {
@@ -291,12 +302,14 @@ async function loadStreamsForId(type, id) {
   availableSubtitles.value = [];
 
   try {
-    const [streams, subs] = await Promise.all([
-      fetchStreams(addonsStore.streamAddons, type, id),
-      fetchSubtitles(addonsStore.subtitleAddons, type, id),
+    await Promise.all([
+      fetchStreamsProgressive(addonsStore.streamAddons, type, id, (chunk) => {
+        availableStreams.value.push(...chunk);
+      }),
+      fetchSubtitlesProgressive(addonsStore.subtitleAddons, type, id, (chunk) => {
+        availableSubtitles.value.push(...chunk);
+      }),
     ]);
-    availableStreams.value = streams;
-    availableSubtitles.value = subs;
   } catch (err) {
     console.error('Failed to load streams/subtitles:', err);
   } finally {
@@ -810,16 +823,42 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 16px;
-  background: var(--accent);
+  padding: 7px 14px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: var(--radius-sm);
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   font-weight: 600;
-  color: #fff;
-  transition: filter 0.15s;
+  color: #ffffff;
+  transition: all 0.15s;
   pointer-events: none;
 }
-.stream-card:hover .btn-play-stream { filter: brightness(1.15); }
+.stream-card:hover .btn-play-stream {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+}
+
+.search-loading-state, .streams-loading-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  gap: 14px;
+  color: var(--muted);
+  text-align: center;
+}
+.search-spinner {
+  width: 28px; height: 28px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.loading-txt {
+  font-size: 0.9rem;
+  color: #ffffff;
+}
 
 .no-streams {
   text-align: center;

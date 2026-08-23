@@ -359,17 +359,35 @@ function resetDefaults() {
   font-size: 0.82rem;
   transition: color 0.15s;
 }
-.btn-reset:hover { color: var(--text); }
+.btn-install {
+  padding: 8px 18px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--radius-sm);
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-install:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+}
 
 .btn-done {
-  padding: 8px 18px;
-  background: var(--surface2);
-  border: 1px solid var(--border-light);
+  padding: 8px 22px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: var(--radius-sm);
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   font-weight: 600;
-  color: var(--text);
-  transition: border-color 0.15s, background 0.15s;
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s;
 }
-.btn-done:hover { border-color: var(--accent); background: var(--accent-dim); }
+.btn-done:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+}
 </style>

@@ -84,68 +84,115 @@ export async function getMeta(type, id) {
 }
 
 /**
- * Query all active stream addons for available video streams
+ * Query all active stream addons with progressive callback as each addon finishes
  */
-export async function fetchStreams(addons, type, id) {
+export async function fetchStreamsProgressive(addons, type, id, onChunk) {
   const streamAddons = (addons || []).filter(a => a.enabled && hasResource(a, 'stream', type));
   if (!streamAddons.length) return [];
 
-  const results = await Promise.allSettled(
-    streamAddons.map(async (addon) => {
+  const allStreams = [];
+
+  const promises = streamAddons.map(async (addon) => {
+    try {
       const baseUrl = getAddonBaseUrl(addon.manifestUrl);
       const url = `${baseUrl}/stream/${type}/${encodeURIComponent(id)}.json`;
       const res = await fetch(url, { headers: { Accept: 'application/json' } });
       if (!res.ok) return [];
       const data = await res.json();
-      const streams = data.streams || [];
-      return streams.map(s => ({
-        ...s,
-        addonName: addon.name,
-        addonLogo: addon.logo,
-        addonId: addon.id,
-      }));
-    })
-  );
+      const streams = (data.streams || [])
+        .filter(s => !!(s.url || s.externalUrl || s.infoHash))
+        .map(s => ({
+          ...s,
+          addonName: addon.name,
+          addonLogo: addon.logo,
+          addonId: addon.id,
+        }));
 
-  return results
-    .filter(r => r.status === 'fulfilled')
-    .flatMap(r => r.value)
-    .filter(s => !!(s.url || s.externalUrl || s.infoHash));
+      if (streams.length > 0) {
+        allStreams.push(...streams);
+        if (typeof onChunk === 'function') {
+          onChunk(streams, addon);
+        }
+      }
+      return streams;
+    } catch {
+      return [];
+    }
+  });
+
+  await Promise.allSettled(promises);
+  return allStreams;
 }
 
 /**
- * Query all active subtitle addons + OpenSubtitles for subtitle tracks
+ * Backwards compatible fetchStreams
  */
-export async function fetchSubtitles(addons, type, id) {
+export async function fetchStreams(addons, type, id) {
+  return fetchStreamsProgressive(addons, type, id, null);
+}
+
+/**
+ * Query all active subtitle addons + OpenSubtitles with progressive callback
+ */
+export async function fetchSubtitlesProgressive(addons, type, id, onChunk) {
   const subAddons = (addons || []).filter(a => a.enabled && hasResource(a, 'subtitles', type));
   
-  // Ensure OpenSubtitles fallback is present
-  const urls = subAddons.map(a => `${getAddonBaseUrl(a.manifestUrl)}/subtitles/${type}/${encodeURIComponent(id)}.json`);
+  const sources = subAddons.map(a => ({
+    name: a.name,
+    url: `${getAddonBaseUrl(a.manifestUrl)}/subtitles/${type}/${encodeURIComponent(id)}.json`,
+  }));
+
   if (!subAddons.some(a => a.manifestUrl.includes('opensubtitles'))) {
-    urls.push(`${OPENSUBTITLES_URL}/subtitles/${type}/${encodeURIComponent(id)}.json`);
+    sources.push({
+      name: 'OpenSubtitles v3',
+      url: `${OPENSUBTITLES_URL}/subtitles/${type}/${encodeURIComponent(id)}.json`,
+    });
   }
 
-  const results = await Promise.allSettled(
-    urls.map(async (url) => {
-      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+  const seen = new Set();
+  const allSubs = [];
+
+  const promises = sources.map(async (src) => {
+    try {
+      const res = await fetch(src.url, { headers: { Accept: 'application/json' } });
       if (!res.ok) return [];
       const data = await res.json();
-      return data.subtitles || [];
-    })
-  );
+      const subs = (data.subtitles || [])
+        .filter(s => !!s.url)
+        .map(s => ({
+          ...s,
+          addonName: src.name,
+        }));
 
-  const allSubs = results
-    .filter(r => r.status === 'fulfilled')
-    .flatMap(r => r.value)
-    .filter(s => !!s.url);
+      const newSubs = [];
+      for (const s of subs) {
+        if (!seen.has(s.url)) {
+          seen.add(s.url);
+          newSubs.push(s);
+        }
+      }
 
-  // De-duplicate by URL
-  const seen = new Set();
-  return allSubs.filter(sub => {
-    if (seen.has(sub.url)) return false;
-    seen.add(sub.url);
-    return true;
+      if (newSubs.length > 0) {
+        allSubs.push(...newSubs);
+        if (typeof onChunk === 'function') {
+          onChunk(newSubs, src.name);
+        }
+      }
+      return newSubs;
+    } catch {
+      return [];
+    }
   });
+
+  await Promise.allSettled(promises);
+  return allSubs;
+}
+
+/**
+ * Backwards compatible fetchSubtitles
+ */
+export async function fetchSubtitles(addons, type, id) {
+  return fetchSubtitlesProgressive(addons, type, id, null);
 }
 
 function hasResource(addon, resourceName, type) {

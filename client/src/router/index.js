@@ -7,6 +7,14 @@ export default createRouter({
   routes: [
     { path: '/', component: Home },
     { path: '/room/:roomId', name: 'room', component: Room },
+    {
+      path: '/blockbuster',
+      name: 'blockbuster',
+      beforeEnter: () => {
+        window.location.replace('/blockbuster.html');
+        return false;
+      },
+    },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 });

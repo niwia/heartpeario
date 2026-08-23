@@ -308,29 +308,40 @@ onMounted(async () => {
   justify-content: center;
   gap: 8px;
   padding: 12px 20px;
-  background: var(--accent);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: var(--radius-sm);
   font-size: 0.95rem;
   font-weight: 600;
-  color: #fff;
-  transition: filter 0.15s, transform 0.1s;
+  color: #ffffff;
+  transition: all 0.15s;
   min-height: 44px;
+  cursor: pointer;
 }
-.btn-accent:hover:not(:disabled) { filter: brightness(1.12); transform: translateY(-1px); }
+.btn-accent:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+  transform: translateY(-1px);
+}
 .btn-accent:active:not(:disabled) { transform: translateY(0); }
 
 .btn-ghost {
   flex-shrink: 0;
   padding: 10px 18px;
-  border: 1px solid var(--border-light);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: transparent;
   border-radius: var(--radius-sm);
   font-size: 0.9rem;
   font-weight: 500;
-  color: var(--text);
-  transition: border-color 0.15s, background 0.15s;
+  color: #ffffff;
+  transition: all 0.15s;
   white-space: nowrap;
+  cursor: pointer;
 }
-.btn-ghost:hover:not(:disabled) { border-color: var(--accent); background: var(--accent-dim); }
+.btn-ghost:hover:not(:disabled) {
+  border-color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
 
 /* Separator */
 .sep {

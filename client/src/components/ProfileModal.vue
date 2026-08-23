@@ -713,14 +713,19 @@ function fmtRelativeTime(ts) {
 }
 .btn-create {
   padding: 8px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border-light);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: var(--radius-sm);
   font-size: 0.82rem;
   font-weight: 600;
-  color: var(--text);
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s;
 }
-.btn-create:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.btn-create:hover:not(:disabled) {
+  border-color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
 
 .vault-info-box {
   background: rgba(61, 190, 122, 0.06);
@@ -758,11 +763,18 @@ function fmtRelativeTime(ts) {
   background: var(--surface);
 }
 .btn-done {
-  padding: 8px 20px;
-  background: var(--accent);
+  padding: 8px 22px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: var(--radius-sm);
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   font-weight: 600;
-  color: #fff;
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-done:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
 }
 </style>
