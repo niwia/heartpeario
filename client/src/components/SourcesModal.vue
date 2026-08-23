@@ -64,10 +64,13 @@
         <!-- Sources List -->
         <div v-else class="sources-list">
           <div
-            v-for="(s, idx) in filteredSources"
+            v-for="(s, idx) in sortedSources"
             :key="s.url || idx"
             class="source-card"
-            :class="{ active: currentUrl === (s.url || s.externalUrl) }"
+            :class="{
+              active: currentUrl === (s.url || s.externalUrl),
+              'is-dead': healthMap[s.url || s.externalUrl]?.online === false
+            }"
             @click="selectSource(s)"
           >
             <div class="source-left">
@@ -77,6 +80,21 @@
                   <span class="source-name">{{ s.name || s.title || 'Stream ' + (idx + 1) }}</span>
                   <span v-if="extractQuality(s)" class="quality-pill" :class="qualityClass(extractQuality(s))">
                     {{ extractQuality(s) }}
+                  </span>
+                  <!-- Stream Health Badge -->
+                  <span
+                    v-if="healthMap[s.url || s.externalUrl]?.online === true"
+                    class="health-pill health-ok"
+                    title="Stream is verified online"
+                  >
+                    ONLINE
+                  </span>
+                  <span
+                    v-else-if="healthMap[s.url || s.externalUrl]?.online === false"
+                    class="health-pill health-dead"
+                    title="Stream link returned 404 or dead"
+                  >
+                    DEAD 404
                   </span>
                 </div>
                 <span v-if="s.title && s.name !== s.title" class="source-details">{{ s.title }}</span>
@@ -113,7 +131,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import { useAddonsStore } from '@/stores/addons';
 import { fetchStreamsProgressive } from '@/services/stremio.service';
 import Icon from '@/components/Icon.vue';
@@ -139,6 +157,7 @@ const addonsStore = useAddonsStore();
 const fetchedSources = ref([]);
 const loading = ref(false);
 const selectedAddonFilter = ref('all');
+const healthMap = ref({});
 
 const allSources = computed(() => {
   if (fetchedSources.value.length > 0) return fetchedSources.value;
@@ -159,6 +178,47 @@ const filteredSources = computed(() => {
   return allSources.value.filter(s => (s.addonName || 'Addon') === selectedAddonFilter.value);
 });
 
+// Sort sources so verified dead streams are at the bottom
+const sortedSources = computed(() => {
+  const list = [...filteredSources.value];
+  return list.sort((a, b) => {
+    const urlA = a.url || a.externalUrl;
+    const urlB = b.url || b.externalUrl;
+    const deadA = healthMap.value[urlA]?.online === false ? 1 : 0;
+    const deadB = healthMap.value[urlB]?.online === false ? 1 : 0;
+    return deadA - deadB;
+  });
+});
+
+async function probeStreamHealth(url) {
+  if (!url || healthMap.value[url]) return;
+  healthMap.value[url] = { checking: true };
+  try {
+    const basePath = window.location.pathname.startsWith('/watchpear2') ? '/watchpear2' : '';
+    const res = await fetch(`${basePath}/api/probe?url=${encodeURIComponent(url)}`);
+    if (res.ok) {
+      const data = await res.json();
+      healthMap.value[url] = { checking: false, online: data.online, status: data.status };
+    } else {
+      healthMap.value[url] = { checking: false, online: null };
+    }
+  } catch {
+    healthMap.value[url] = { checking: false, online: null };
+  }
+}
+
+function probeAllVisible() {
+  const list = filteredSources.value.slice(0, 10);
+  list.forEach(s => {
+    const url = s.url || s.externalUrl;
+    if (url) probeStreamHealth(url);
+  });
+}
+
+watch(filteredSources, () => {
+  probeAllVisible();
+}, { immediate: true });
+
 async function autoFetchSources() {
   if (!props.mediaMeta?.id) return;
   loading.value = true;
@@ -171,6 +231,10 @@ async function autoFetchSources() {
   try {
     await fetchStreamsProgressive(addonsStore.streamAddons, type, id, (chunk) => {
       fetchedSources.value.push(...chunk);
+      chunk.forEach(s => {
+        const url = s.url || s.externalUrl;
+        if (url) probeStreamHealth(url);
+      });
     });
   } catch (err) {
     console.error('[Sources] Failed to fetch streams:', err);
@@ -203,6 +267,8 @@ function qualityClass(q) {
 onMounted(() => {
   if ((!props.sources || props.sources.length === 0) && props.mediaMeta?.id) {
     autoFetchSources();
+  } else {
+    probeAllVisible();
   }
 });
 </script>
@@ -400,6 +466,10 @@ onMounted(() => {
   border-color: rgba(255, 255, 255, 0.5);
   background: rgba(255, 255, 255, 0.08);
 }
+.source-card.is-dead {
+  opacity: 0.6;
+  border-color: rgba(224, 61, 90, 0.3);
+}
 
 .source-left {
   display: flex;
@@ -449,6 +519,24 @@ onMounted(() => {
 .q-1080 { background: rgba(90, 125, 224, 0.2); color: #5a7de0; border: 1px solid rgba(90, 125, 224, 0.4); }
 .q-720 { background: rgba(61, 190, 122, 0.2); color: #3dbe7a; border: 1px solid rgba(61, 190, 122, 0.4); }
 .q-sd { background: rgba(255, 255, 255, 0.1); color: var(--muted); border: 1px solid var(--border); }
+
+.health-pill {
+  font-size: 0.62rem;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.03em;
+}
+.health-ok {
+  background: rgba(61, 190, 122, 0.15);
+  color: #3dbe7a;
+  border: 1px solid rgba(61, 190, 122, 0.3);
+}
+.health-dead {
+  background: rgba(224, 61, 90, 0.15);
+  color: #e03d5a;
+  border: 1px solid rgba(224, 61, 90, 0.3);
+}
 
 .source-details {
   font-size: 0.72rem;

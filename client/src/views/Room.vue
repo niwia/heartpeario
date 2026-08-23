@@ -361,8 +361,34 @@
           </button>
         </div>
 
+        <!-- ── Stream Error / Dead Link Fallback Overlay ────────────── -->
+        <div v-if="streamFailed && room.url" class="stream-error-fallback">
+          <div class="stream-error-card">
+            <div class="err-icon-pill">
+              <Icon name="stop" size="24" />
+            </div>
+            <h3 class="err-title">Stream Link Dead (404 / Expired)</h3>
+            <p class="err-sub">
+              {{ streamErrorReason || 'The stream host returned an error or expired link.' }}
+            </p>
+            <p class="err-hint">
+              Choose another stream source or provider for <strong>{{ room.mediaMeta?.title || 'this video' }}</strong>.
+            </p>
+            <div class="err-actions">
+              <button class="btn-err-action btn-choose-sources" @click="showSourcesModal = true">
+                <Icon name="sources" size="16" />
+                <span>Choose Another Source</span>
+              </button>
+              <button class="btn-err-action btn-open-search" @click="showSearchModal = true">
+                <Icon name="search" size="16" />
+                <span>Search Catalog</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Clean Pure-Text Media Title Top Overlay (No Border/No Box) -->
-        <div v-if="room.mediaMeta && !controlsHidden && room.url" class="media-title-overlay">
+        <div v-if="room.mediaMeta && !controlsHidden && room.url && !streamFailed" class="media-title-overlay">
           <span class="m-title">{{ room.mediaMeta.title }}</span>
           <span v-if="room.mediaMeta.episodeTitle" class="m-ep">{{ room.mediaMeta.episodeTitle }}</span>
           <span v-if="room.mediaMeta.year" class="m-year">({{ room.mediaMeta.year }})</span>
@@ -582,6 +608,8 @@ const playerWrapEl = ref(null);
 
 const detectedAudioTracks = ref([]);
 const cachedSources = ref([]);
+const streamFailed = ref(false);
+const streamErrorReason = ref('');
 
 // ── Smart Subtitle Overlay State ──────────────────────────────────────────
 const activeCues = ref([]);
@@ -973,10 +1001,12 @@ function onWaiting() {
 function onPlaying() {
   buffering.value = false;
   paused.value = false;
+  streamFailed.value = false;
 }
 
 function onCanPlay() {
   buffering.value = false;
+  streamFailed.value = false;
   if (videoEl.value) {
     videoEl.value.volume = isMuted.value ? 0 : volume.value;
     videoEl.value.muted = isMuted.value;
@@ -989,12 +1019,14 @@ function onVideoError() {
   const err = videoEl.value?.error;
   let reason = 'Stream link is dead or unavailable from provider';
   if (err?.code === 4) { // MEDIA_ERR_SRC_NOT_SUPPORTED
-    reason = 'Provider link returned 404/Dead. Please select another source.';
+    reason = 'Provider stream returned 404 / Dead link. Please choose an alternative source.';
   } else if (err?.code === 2) { // MEDIA_ERR_NETWORK
     reason = 'Network connection failed while reaching provider.';
   }
-  doToast(`Could not load stream: ${reason}`, 5000);
+  streamFailed.value = true;
+  streamErrorReason.value = reason;
   buffering.value = false;
+  doToast(`Could not load stream: ${reason}`, 5000);
 }
 
 // ── Smart Synchronization Engine ──────────────────────────────────────────
@@ -1429,6 +1461,7 @@ onMounted(async () => {
       currentTime.value = 0;
       duration.value = 0;
       lastAppliedSeq = 0;
+      streamFailed.value = false;
 
       nextTick(() => {
         if (videoEl.value) {
@@ -2201,6 +2234,100 @@ onMounted(async () => {
   color: rgba(255, 255, 255, 0.75);
   letter-spacing: 0.05em;
   text-transform: uppercase;
+}
+
+/* ── Stream Error Fallback Overlay ───────────────────────────────────────── */
+.stream-error-fallback {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 10, 16, 0.88);
+  backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 25;
+  animation: fade-in 0.25s ease both;
+}
+.stream-error-card {
+  max-width: 480px;
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid rgba(224, 61, 90, 0.4);
+  border-radius: var(--radius-lg);
+  padding: 28px 24px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9);
+}
+.err-icon-pill {
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  background: rgba(224, 61, 90, 0.15);
+  border: 1px solid rgba(224, 61, 90, 0.4);
+  color: #e03d5a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.err-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+.err-sub {
+  font-size: 0.86rem;
+  color: #e03d5a;
+  line-height: 1.4;
+  margin: 0;
+}
+.err-hint {
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.4;
+  margin: 0;
+}
+.err-hint strong {
+  color: #ffffff;
+}
+.err-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.btn-err-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-choose-sources {
+  background: transparent;
+  border: 1px solid #ffffff;
+  color: #ffffff;
+}
+.btn-choose-sources:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+.btn-open-search {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: var(--muted);
+}
+.btn-open-search:hover {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 /* ── Cinema Placeholder & Continue Watching ──────────────────────────────── */
