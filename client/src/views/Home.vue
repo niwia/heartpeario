@@ -14,7 +14,6 @@
 
       <!-- Logo -->
       <div class="logo" aria-label="HeartPeario">
-        <span class="heart" aria-hidden="true">HP</span>
         <span class="wordmark">HeartPeario</span>
       </div>
       <p class="tagline">Watch videos together in sync, instantly.</p>

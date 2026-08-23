@@ -3,9 +3,9 @@
 
 /* ─── Tokens ─────────────────────────────────────────────────────────────── */
 :root {
-  --accent:       #e03d5a;
-  --accent-dim:   rgba(224, 61, 90, 0.18);
-  --accent-glow:  rgba(224, 61, 90, 0.35);
+  --accent:       #ffffff;
+  --accent-dim:   rgba(255, 255, 255, 0.12);
+  --accent-glow:  rgba(255, 255, 255, 0.25);
   --gold:         #f0a030;
   --bg:           #0a0a0d;
   --surface:      #131318;
@@ -13,7 +13,7 @@
   --border:       #252530;
   --border-light: #303040;
   --text:         #f0f0f2;
-  --muted:        #7a7a8a;
+  --muted:        #8a8a9a;
   --radius-sm:    6px;
   --radius:       12px;
   --radius-lg:    18px;

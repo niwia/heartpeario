@@ -66,7 +66,6 @@
     <header class="header">
       <div class="header-left">
         <router-link to="/" class="logo">
-          <span class="logo-badge">HP</span>
           <span class="logo-text">HeartPeario</span>
         </router-link>
 
@@ -100,22 +99,10 @@
           <span class="host-pill-name">{{ hostDisplayName }}</span>
         </div>
 
-        <!-- Users dropdown / list -->
+        <!-- Viewers Count Pill (Click to open viewers list & host delegation) -->
         <div class="users-pill" @click="showUsersMenu = !showUsersMenu" title="View room members">
           <Icon name="user" size="14" />
-          <span class="user-count">{{ room.users.length }}</span>
-          <div class="users-avatar-stack">
-            <span
-              v-for="u in room.users"
-              :key="u.id"
-              class="user-dot"
-              :style="{ background: u.color }"
-              :title="u.name + (u.id === room.hostId ? ' (Host)' : '')"
-            >
-              {{ u.name.charAt(0).toUpperCase() }}
-              <span v-if="u.id === room.hostId" class="host-dot-badge">H</span>
-            </span>
-          </div>
+          <span class="user-count">{{ room.users.length }} Viewers</span>
         </div>
 
         <!-- Users Dropdown Menu / Host Delegation -->
@@ -195,26 +182,73 @@
         :class="{ 'controls-hidden': controlsHidden && !paused && !!room.url && !room.activeCountdown }"
       >
 
-        <!-- Static Placeholder when no URL is loaded -->
+        <!-- ── Continue Watching & Recent Streams / Placeholder ──────── -->
         <div v-if="!room.url" class="placeholder">
-          <div class="placeholder-inner">
-            <div class="ph-icon-wrap">
-              <Icon name="play" size="48" />
+          <div class="placeholder-content">
+
+            <!-- Continue Watching Section (Last up to 5 items) -->
+            <div v-if="recentStreams.length > 0" class="recent-section">
+              <div class="recent-header">
+                <span class="recent-sec-title">Continue Watching</span>
+                <span class="recent-sec-sub">Pick up where you left off</span>
+              </div>
+
+              <div class="recent-grid">
+                <div
+                  v-for="(item, idx) in recentStreams"
+                  :key="item.id + (item.url || idx)"
+                  class="recent-card"
+                  @click="resumeRecentStream(item)"
+                  title="Click to resume in room"
+                >
+                  <div class="recent-poster-wrap">
+                    <img v-if="item.poster" :src="item.poster" class="recent-poster-img" alt="" />
+                    <div v-else class="recent-poster-ph">
+                      <Icon name="play" size="24" />
+                    </div>
+                    <button
+                      class="btn-delete-recent"
+                      @click="removeRecentStream(idx, $event)"
+                      title="Remove from history"
+                    >
+                      <Icon name="close" size="12" />
+                    </button>
+                    <!-- Progress Bar -->
+                    <div v-if="item.durationSeconds > 0" class="card-progress-bar">
+                      <div
+                        class="card-progress-fill"
+                        :style="{ width: Math.min(100, (item.progressSeconds / item.durationSeconds) * 100) + '%' }"
+                      ></div>
+                    </div>
+                  </div>
+
+                  <div class="recent-info">
+                    <span class="recent-title" :title="item.title">{{ item.title }}</span>
+                    <span v-if="item.episodeTitle" class="recent-ep">{{ item.episodeTitle }}</span>
+                    <span class="recent-resume-label">Resume at {{ fmtTime(item.progressSeconds) }}</span>
+                  </div>
+                </div>
+              </div>
             </div>
-            <h2 class="ph-title">Ready to Play</h2>
-            <p class="ph-sub">
-              Search for movies or shows with Stremio addons, or paste a direct video stream link to watch in sync.
-            </p>
-            <div class="placeholder-actions">
-              <button class="btn-ph-search" @click="showSearchModal = true">
+
+            <!-- Ready to Play Call to Action -->
+            <div v-else class="empty-cinema-prompt">
+              <h2 class="ph-title">Ready to Play</h2>
+              <p class="ph-sub">Search for movies or shows from your addons, or paste a video URL.</p>
+            </div>
+
+            <!-- Quick Action Buttons -->
+            <div class="placeholder-actions-row">
+              <button class="btn-ph-action btn-main" @click="showSearchModal = true">
                 <Icon name="search" size="16" />
                 <span>Search Catalog</span>
               </button>
-              <button class="btn-ph-url" @click="openUrlBar">
+              <button class="btn-ph-action btn-sub" @click="openUrlBar">
                 <Icon name="link" size="16" />
                 <span>Paste Stream URL</span>
               </button>
             </div>
+
           </div>
         </div>
 
@@ -264,7 +298,7 @@
           title="Click to Play"
         >
           <div class="center-play-btn">
-            <Icon name="play" size="38" />
+            <Icon name="play" size="36" />
           </div>
         </div>
 
@@ -273,25 +307,18 @@
           <div class="buf-spinner"></div>
         </div>
 
-        <!-- ── 3-Second Synchronized Action Countdown Overlay ──────────────── -->
-        <div v-if="room.activeCountdown && room.url" class="countdown-overlay">
-          <div class="countdown-card">
-            <div class="countdown-circle">
-              <span class="countdown-num">{{ countdownSecondsRemaining }}</span>
-            </div>
-            <div class="countdown-info">
-              <span class="countdown-title">{{ countdownTitle }}</span>
-              <span class="countdown-sub">{{ countdownSubtitle }}</span>
-            </div>
-            <button
-              v-if="canCancelCountdown"
-              class="btn-cancel-countdown"
-              @click="cancelCountdown"
-              title="Cancel countdown"
-            >
-              Cancel
-            </button>
-          </div>
+        <!-- ── 3-Second Synchronized Countdown Status (Bottom Left Text Line) ── -->
+        <div v-if="room.activeCountdown && room.url" class="countdown-bottom-indicator">
+          <span class="countdown-dot"></span>
+          <span class="countdown-text">{{ countdownBottomText }}</span>
+          <button
+            v-if="canCancelCountdown"
+            class="btn-cancel-text"
+            @click.stop="cancelCountdown"
+            title="Cancel countdown"
+          >
+            Cancel
+          </button>
         </div>
 
         <!-- Direct URL Bar Overlay -->
@@ -320,7 +347,7 @@
           <span v-if="room.mediaMeta.year" class="m-year">({{ room.mediaMeta.year }})</span>
         </div>
 
-        <!-- ── Controls Overlay ──────────────────────────────────────── -->
+        <!-- ── Clean Minimal Controls Overlay ────────────────────────── -->
         <div class="controls" v-if="room.url">
           <div class="controls-inner">
 
@@ -570,6 +597,101 @@ const roomNotFoundCode = ref('');
 const activeSubTrackBlobUrl = ref(null);
 const roomTsMap = ref({});
 
+// ── Recent Streams History (Up to last 5 items) ───────────────────────────
+const RECENT_KEY = 'hp-recent-streams';
+const recentStreams = ref([]);
+let lastSavedProgressTime = 0;
+
+function loadRecentStreams() {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (raw) {
+      recentStreams.value = JSON.parse(raw) || [];
+    }
+  } catch {}
+}
+
+function saveRecentStreamRecord({ url, mediaMeta, subtitles, progressSeconds, durationSeconds }) {
+  if (!url) return;
+  try {
+    const list = [...recentStreams.value];
+    const id = mediaMeta?.id || url;
+    const existingIdx = list.findIndex(item => (item.id && item.id === id) || item.url === url);
+    const entry = {
+      id,
+      title: mediaMeta?.title || 'Video Stream',
+      year: mediaMeta?.year || '',
+      poster: mediaMeta?.poster || '',
+      episodeTitle: mediaMeta?.episodeTitle || null,
+      season: mediaMeta?.season || null,
+      episode: mediaMeta?.episode || null,
+      url,
+      subtitles: subtitles || [],
+      progressSeconds: Math.max(0, parseFloat(progressSeconds) || 0),
+      durationSeconds: Math.max(0, parseFloat(durationSeconds) || 0),
+      lastWatchedAt: Date.now(),
+    };
+    if (existingIdx >= 0) {
+      list.splice(existingIdx, 1);
+    }
+    list.unshift(entry);
+    const trimmed = list.slice(0, 5);
+    recentStreams.value = trimmed;
+    localStorage.setItem(RECENT_KEY, JSON.stringify(trimmed));
+  } catch {}
+}
+
+function updateCurrentStreamProgress(currentTimeVal, durationVal) {
+  if (!room.url) return;
+  try {
+    const list = [...recentStreams.value];
+    const id = room.mediaMeta?.id || room.url;
+    const existing = list.find(item => (item.id && item.id === id) || item.url === room.url);
+    if (existing) {
+      existing.progressSeconds = Math.max(0, parseFloat(currentTimeVal) || 0);
+      if (durationVal > 0) existing.durationSeconds = durationVal;
+      existing.lastWatchedAt = Date.now();
+      localStorage.setItem(RECENT_KEY, JSON.stringify(list));
+    }
+  } catch {}
+}
+
+function removeRecentStream(idx, e) {
+  if (e) e.stopPropagation();
+  recentStreams.value.splice(idx, 1);
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(recentStreams.value));
+  } catch {}
+}
+
+function resumeRecentStream(item) {
+  onStreamSelected({
+    url: item.url,
+    mediaMeta: {
+      id: item.id,
+      title: item.title,
+      year: item.year,
+      poster: item.poster,
+      episodeTitle: item.episodeTitle,
+      season: item.season,
+      episode: item.episode,
+    },
+    subtitles: item.subtitles || [],
+  });
+
+  // If saved position is > 5s, seek to it
+  if (item.progressSeconds > 5) {
+    setTimeout(() => {
+      if (room.isHost) {
+        socket.send('player.countdown_action', {
+          action: 'SEEK',
+          time: item.progressSeconds,
+        });
+      }
+    }, 600);
+  }
+}
+
 // ── Player Refs ───────────────────────────────────────────────────────────
 const videoEl    = ref(null);
 const urlInputEl = ref(null);
@@ -615,22 +737,15 @@ const playPauseButtonTitle = computed(() => {
   return paused.value ? 'Request Resume (3s countdown)' : 'Request Pause (3s countdown)';
 });
 
-const countdownTitle = computed(() => {
+const countdownBottomText = computed(() => {
   if (!room.activeCountdown) return '';
   const action = room.activeCountdown.action;
-  if (action === 'PLAY') return 'Resuming Playback in 3s...';
-  if (action === 'PAUSE') return 'Pausing in 3s...';
-  if (action === 'SEEK') return `Seeking to ${fmtTime(room.activeCountdown.targetTime)} in 3s...`;
-  return 'Action in 3s...';
-});
-
-const countdownSubtitle = computed(() => {
-  if (!room.activeCountdown) return '';
-  const initiator = room.activeCountdown.initiatedByName || 'Viewer';
-  if (room.activeCountdown.initiatedBy === room.you?.id) {
-    return 'Initiated by you';
-  }
-  return `Requested by ${initiator}`;
+  const initiator = room.activeCountdown.initiatedBy === room.you?.id ? 'You' : (room.activeCountdown.initiatedByName || 'Viewer');
+  const sec = countdownSecondsRemaining.value;
+  if (action === 'PLAY') return `Resuming in ${sec}s... (${initiator})`;
+  if (action === 'PAUSE') return `Pausing in ${sec}s... (${initiator})`;
+  if (action === 'SEEK') return `Seeking to ${fmtTime(room.activeCountdown.targetTime)} in ${sec}s... (${initiator})`;
+  return `Action in ${sec}s... (${initiator})`;
 });
 
 const canCancelCountdown = computed(() => {
@@ -729,6 +844,11 @@ function toggleFullscreen() {
 function onTimeUpdate() {
   if (!isUserScrubbing.value && videoEl.value) {
     currentTime.value = videoEl.value.currentTime;
+    const now = Date.now();
+    if (now - lastSavedProgressTime > 4000) {
+      lastSavedProgressTime = now;
+      updateCurrentStreamProgress(videoEl.value.currentTime, videoEl.value.duration);
+    }
   }
 }
 
@@ -776,6 +896,7 @@ async function applySync(data) {
       videoEl.value.currentTime = target;
     }
     paused.value = true;
+    updateCurrentStreamProgress(target, videoEl.value.duration);
   } else {
     if (Math.abs(videoEl.value.currentTime - target) > 1.5) {
       videoEl.value.currentTime = target;
@@ -886,6 +1007,14 @@ function onStreamSelected({ url, mediaMeta, subtitles }) {
     loadCurrentSubtitle();
   }
 
+  saveRecentStreamRecord({
+    url,
+    mediaMeta,
+    subtitles,
+    progressSeconds: 0,
+    durationSeconds: 0,
+  });
+
   if (url && mediaMeta) {
     profileStore.recordWatch({
       id: mediaMeta.id,
@@ -931,6 +1060,13 @@ function setDirectUrl() {
     if (videoEl.value) {
       videoEl.value.load();
     }
+  });
+  saveRecentStreamRecord({
+    url,
+    mediaMeta: { title: 'Direct Stream' },
+    subtitles: [],
+    progressSeconds: 0,
+    durationSeconds: 0,
   });
   urlInput.value = '';
   showUrlBar.value = false;
@@ -1068,6 +1204,7 @@ onMounted(async () => {
   const rawCode = route.params.roomId;
   const roomId = (rawCode || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
   await profileStore.init();
+  loadRecentStreams();
 
   const savedName = profileStore.current.name || localStorage.getItem('hp-username');
   joinNameInput.value = savedName || '';
@@ -1150,6 +1287,16 @@ onMounted(async () => {
           videoEl.value.load();
         }
       });
+
+      if (data.url) {
+        saveRecentStreamRecord({
+          url: data.url,
+          mediaMeta: data.mediaMeta,
+          subtitles: data.subtitles,
+          progressSeconds: 0,
+          durationSeconds: 0,
+        });
+      }
 
       if (data.url && data.mediaMeta) {
         profileStore.recordWatch({
@@ -1280,17 +1427,17 @@ onMounted(async () => {
 .nf-icon-wrap {
   width: 64px; height: 64px;
   border-radius: 50%;
-  background: rgba(224, 61, 90, 0.12);
-  border: 1px solid rgba(224, 61, 90, 0.3);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent);
+  color: #fff;
 }
 .not-found-card h2 {
   font-size: 1.4rem;
   font-weight: 700;
-  color: var(--text);
+  color: #fff;
 }
 .nf-desc {
   font-size: 0.88rem;
@@ -1301,7 +1448,7 @@ onMounted(async () => {
   background: var(--surface2);
   padding: 2px 6px;
   border-radius: 4px;
-  color: var(--accent);
+  color: #fff;
   font-weight: 700;
 }
 .nf-actions {
@@ -1312,15 +1459,15 @@ onMounted(async () => {
   display: block;
   width: 100%;
   padding: 12px 20px;
-  background: var(--accent);
+  background: #ffffff;
   border-radius: var(--radius-sm);
   font-size: 0.92rem;
   font-weight: 600;
-  color: #fff;
+  color: #000000;
   text-align: center;
-  transition: filter 0.15s, transform 0.1s;
+  transition: opacity 0.15s, transform 0.1s;
 }
-.btn-return-home:hover { filter: brightness(1.15); transform: translateY(-1px); }
+.btn-return-home:hover { opacity: 0.9; transform: translateY(-1px); }
 
 /* ── Join / Rename Overlays ─────────────────────────────────────────────── */
 .join-overlay {
@@ -1351,14 +1498,14 @@ onMounted(async () => {
   align-self: flex-start;
   font-size: 0.72rem;
   font-weight: 700;
-  color: var(--accent);
-  background: var(--accent-dim);
-  border: 1px solid rgba(224, 61, 90, 0.3);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   padding: 3px 8px;
   border-radius: 999px;
   letter-spacing: 0.05em;
 }
-.join-card h2 { font-size: 1.25rem; font-weight: 700; color: var(--text); }
+.join-card h2 { font-size: 1.25rem; font-weight: 700; color: #fff; }
 .join-sub { font-size: 0.82rem; color: var(--muted); margin-top: -6px; }
 
 .join-form {
@@ -1373,21 +1520,21 @@ onMounted(async () => {
   border-radius: var(--radius-sm);
   padding: 10px 14px;
   font-size: 0.95rem;
-  color: var(--text);
+  color: #ffffff;
   transition: border-color 0.15s;
 }
-.join-form input:focus { border-color: var(--accent); }
+.join-form input:focus { border-color: #ffffff; }
 
 .btn-join-room {
   padding: 11px 20px;
-  background: var(--accent);
+  background: #ffffff;
   border-radius: var(--radius-sm);
   font-size: 0.92rem;
   font-weight: 600;
-  color: #fff;
-  transition: filter 0.15s;
+  color: #000000;
+  transition: opacity 0.15s;
 }
-.btn-join-room:hover:not(:disabled) { filter: brightness(1.15); }
+.btn-join-room:hover:not(:disabled) { opacity: 0.9; }
 
 .rename-actions {
   display: flex;
@@ -1402,7 +1549,7 @@ onMounted(async () => {
   font-size: 0.85rem;
   color: var(--muted);
 }
-.btn-cancel:hover { color: var(--text); border-color: var(--border-light); }
+.btn-cancel:hover { color: #fff; border-color: var(--border-light); }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .header {
@@ -1427,25 +1574,14 @@ onMounted(async () => {
 .logo {
   display: flex;
   align-items: center;
-  gap: 8px;
   text-decoration: none;
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   font-weight: 700;
-  color: var(--text);
-}
-.logo-badge {
-  background: var(--accent);
-  color: #fff;
-  font-size: 0.72rem;
-  font-weight: 800;
-  padding: 2px 6px;
-  border-radius: 4px;
-  letter-spacing: 0.05em;
+  color: #ffffff;
+  letter-spacing: -0.01em;
 }
 .logo-text {
-  background: linear-gradient(120deg, #fff 40%, var(--accent) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: #ffffff;
 }
 
 .room-code-badge {
@@ -1460,16 +1596,16 @@ onMounted(async () => {
   position: relative;
   transition: border-color 0.15s;
 }
-.room-code-badge:hover { border-color: var(--accent); }
+.room-code-badge:hover { border-color: rgba(255, 255, 255, 0.4); }
 .room-label { font-size: 0.68rem; font-weight: 700; color: var(--muted); }
-.room-id { font-size: 0.82rem; font-weight: 700; color: var(--text); letter-spacing: 0.05em; }
+.room-id { font-size: 0.82rem; font-weight: 700; color: #ffffff; letter-spacing: 0.05em; }
 .copy-icon { color: var(--muted); }
 .copied-tooltip {
   position: absolute;
   top: 100%; left: 50%;
   transform: translateX(-50%) translateY(6px);
-  background: var(--accent);
-  color: #fff;
+  background: #ffffff;
+  color: #000000;
   font-size: 0.72rem;
   font-weight: 700;
   padding: 3px 8px;
@@ -1492,25 +1628,24 @@ onMounted(async () => {
   transition: all 0.15s;
   cursor: pointer;
 }
-.header-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(255, 255, 255, 0.08); }
+.header-btn:hover { border-color: rgba(255, 255, 255, 0.4); background: rgba(255, 255, 255, 0.08); }
 
 /* Host Pill in Header */
 .host-pill {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(245, 166, 35, 0.12);
-  border: 1px solid rgba(245, 166, 35, 0.4);
+  background: var(--surface2);
+  border: 1px solid var(--border);
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   font-size: 0.78rem;
   font-weight: 600;
-  color: var(--gold);
+  color: #ffffff;
 }
 .host-pill.is-you {
-  background: rgba(224, 61, 90, 0.15);
-  border-color: rgba(224, 61, 90, 0.4);
-  color: var(--accent);
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.08);
 }
 .host-pill-tag {
   font-size: 0.65rem;
@@ -1533,49 +1668,16 @@ onMounted(async () => {
   gap: 6px;
   background: var(--surface2);
   border: 1px solid var(--border);
-  padding: 4px 10px;
+  padding: 5px 12px;
   border-radius: var(--radius-sm);
   font-size: 0.8rem;
+  font-weight: 600;
   color: #ffffff;
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: all 0.15s;
 }
-.users-pill:hover { border-color: var(--border-light); }
-.user-count { font-weight: 700; color: #fff; }
-.users-avatar-stack {
-  display: flex;
-  align-items: center;
-  margin-left: 4px;
-}
-.user-dot {
-  width: 18px; height: 18px;
-  border-radius: 50%;
-  border: 2px solid var(--surface2);
-  margin-left: -5px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.6rem;
-  font-weight: 700;
-  color: #fff;
-  position: relative;
-}
-.user-dot:first-child { margin-left: 0; }
-.host-dot-badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  font-size: 0.5rem;
-  font-weight: 800;
-  background: var(--gold);
-  color: #000;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+.users-pill:hover { border-color: rgba(255, 255, 255, 0.35); background: rgba(255, 255, 255, 0.06); }
+.user-count { font-weight: 600; color: #fff; }
 
 /* Users Dropdown Menu */
 .users-dropdown-backdrop {
@@ -1647,7 +1749,7 @@ onMounted(async () => {
 .user-item-name {
   font-size: 0.82rem;
   font-weight: 600;
-  color: var(--text);
+  color: #ffffff;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1661,9 +1763,9 @@ onMounted(async () => {
 .host-tag {
   font-size: 0.62rem;
   font-weight: 800;
-  background: rgba(245, 166, 35, 0.2);
-  color: var(--gold);
-  border: 1px solid rgba(245, 166, 35, 0.4);
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
   padding: 1px 4px;
   border-radius: 3px;
 }
@@ -1679,9 +1781,9 @@ onMounted(async () => {
   transition: all 0.15s;
 }
 .btn-make-host:hover {
-  background: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
+  background: #ffffff;
+  color: #000000;
+  border-color: #ffffff;
 }
 
 .user-chip-btn {
@@ -1698,15 +1800,15 @@ onMounted(async () => {
   cursor: pointer;
   transition: border-color 0.15s;
 }
-.user-chip-btn:hover { border-color: var(--accent); }
+.user-chip-btn:hover { border-color: rgba(255, 255, 255, 0.35); }
 .user-color-dot { width: 8px; height: 8px; border-radius: 50%; }
 
 .vault-mini-tag {
   font-size: 0.65rem;
   font-weight: 700;
-  color: var(--gold);
-  background: rgba(245, 166, 35, 0.15);
-  border: 1px solid rgba(245, 166, 35, 0.3);
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   padding: 1px 5px;
   border-radius: 4px;
   letter-spacing: 0.03em;
@@ -1734,15 +1836,15 @@ onMounted(async () => {
   transition: all 0.15s;
 }
 .icon-btn:hover, .icon-btn.active {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: var(--accent-dim);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.1);
 }
 .badge {
   position: absolute;
   top: -4px; right: -4px;
-  background: var(--accent);
-  color: #fff;
+  background: #ffffff;
+  color: #000000;
   font-size: 0.65rem;
   font-weight: 700;
   min-width: 16px; height: 16px;
@@ -1796,73 +1898,210 @@ onMounted(async () => {
   background: rgba(0, 0, 0, 0.4);
 }
 .center-play-btn {
-  width: 80px; height: 80px;
+  width: 72px; height: 72px;
   border-radius: 50%;
-  background: rgba(224, 61, 90, 0.9);
+  background: rgba(0, 0, 0, 0.6);
+  border: 2px solid rgba(255, 255, 255, 0.85);
   color: #ffffff;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 12px 36px rgba(224, 61, 90, 0.5);
-  transition: transform 0.15s, filter 0.15s;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  transition: transform 0.15s, border-color 0.15s;
 }
 .center-play-overlay:hover .center-play-btn {
   transform: scale(1.1);
-  filter: brightness(1.15);
+  border-color: #ffffff;
+  background: rgba(0, 0, 0, 0.75);
 }
 
-/* Placeholder */
+/* ── Cinema Placeholder & Continue Watching ──────────────────────────────── */
 .placeholder {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%; height: 100%;
   padding: 24px;
-  text-align: center;
-  background: radial-gradient(circle at center, #181824 0%, #0c0c14 100%);
+  overflow-y: auto;
+  background: radial-gradient(circle at center, #14141e 0%, #08080c 100%);
 }
-.placeholder-inner {
+.placeholder-content {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  max-width: 480px;
+  gap: 24px;
+  max-width: 760px;
+  width: 100%;
 }
-.ph-icon-wrap {
-  width: 84px; height: 84px;
-  background: rgba(224, 61, 90, 0.15);
-  border: 2px solid rgba(224, 61, 90, 0.4);
-  border-radius: 50%;
+
+/* Recent Streams Grid */
+.recent-section {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.recent-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 4px;
+}
+.recent-sec-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #ffffff;
+  letter-spacing: -0.01em;
+}
+.recent-sec-sub {
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.recent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 14px;
+  width: 100%;
+}
+.recent-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.recent-card:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-2px);
+}
+.recent-poster-wrap {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2/3;
+  background: var(--surface2);
+  border-radius: 4px;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--accent);
-  box-shadow: 0 0 32px rgba(224, 61, 90, 0.25);
 }
-.ph-title { font-size: 1.5rem; font-weight: 700; color: #ffffff; letter-spacing: -0.01em; }
-.ph-sub { font-size: 0.92rem; color: var(--muted); line-height: 1.5; }
-.placeholder-actions {
+.recent-poster-img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.recent-poster-ph {
+  color: var(--muted);
+}
+.btn-delete-recent {
+  position: absolute;
+  top: 4px; right: 4px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.7);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.recent-card:hover .btn-delete-recent {
+  opacity: 1;
+}
+.btn-delete-recent:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.card-progress-bar {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.6);
+}
+.card-progress-fill {
+  height: 100%;
+  background: #ffffff;
+}
+
+.recent-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+.recent-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #ffffff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-ep {
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-resume-label {
+  font-size: 0.7rem;
+  color: #ffffff;
+  opacity: 0.8;
+  margin-top: 2px;
+}
+
+.empty-cinema-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+.ph-title { font-size: 1.5rem; font-weight: 700; color: #ffffff; }
+.ph-sub { font-size: 0.9rem; color: var(--muted); }
+
+.placeholder-actions-row {
   display: flex;
   gap: 12px;
-  margin-top: 8px;
   flex-wrap: wrap;
   justify-content: center;
 }
-.btn-ph-search, .btn-ph-url {
+.btn-ph-action {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 22px;
+  padding: 10px 20px;
   border-radius: var(--radius-sm);
-  font-size: 0.92rem;
+  font-size: 0.88rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
 }
-.btn-ph-search { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
-.btn-ph-search:hover { filter: brightness(1.15); transform: translateY(-1px); box-shadow: 0 6px 20px rgba(224, 61, 90, 0.4); }
-.btn-ph-url { background: var(--surface2); border: 1px solid var(--border); color: #ffffff; }
-.btn-ph-url:hover { border-color: var(--border-light); transform: translateY(-1px); }
+.btn-ph-action.btn-main {
+  background: #ffffff;
+  color: #000000;
+  border: 1px solid #ffffff;
+}
+.btn-ph-action.btn-main:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+.btn-ph-action.btn-sub {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: #ffffff;
+}
+.btn-ph-action.btn-sub:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+  transform: translateY(-1px);
+}
 
 .buffering-overlay {
   position: absolute;
@@ -1875,88 +2114,58 @@ onMounted(async () => {
   z-index: 18;
 }
 .buf-spinner {
-  width: 52px; height: 52px;
-  border: 4px solid rgba(255, 255, 255, 0.2);
-  border-top-color: var(--accent);
+  width: 48px; height: 48px;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #ffffff;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
 
-/* ── 3-Second Synchronized Action Countdown Overlay ──────────────────────── */
-.countdown-overlay {
+/* ── 3-Second Synchronized Action Countdown (Bottom Left Text Line) ──────── */
+.countdown-bottom-indicator {
   position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
+  bottom: 60px;
+  left: 20px;
+  background: rgba(10, 10, 15, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
-  justify-content: center;
-  z-index: 40;
-  animation: fade-in 0.2s ease both;
+  gap: 10px;
+  backdrop-filter: blur(12px);
+  z-index: 25;
+  animation: fade-in 0.15s ease both;
 }
-.countdown-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 16px;
-  background: rgba(18, 18, 26, 0.95);
-  border: 1px solid rgba(224, 61, 90, 0.5);
-  border-radius: var(--radius-lg);
-  padding: 28px 36px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.85);
-  text-align: center;
-  max-width: min(380px, 90%);
-}
-.countdown-circle {
-  width: 80px; height: 80px;
+.countdown-dot {
+  width: 8px; height: 8px;
   border-radius: 50%;
-  background: rgba(224, 61, 90, 0.18);
-  border: 3px solid var(--accent);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 0 28px rgba(224, 61, 90, 0.45);
-  animation: pulse-countdown 1s infinite ease-in-out;
+  background: #ffffff;
+  box-shadow: 0 0 8px #ffffff;
+  animation: blink-pulse 1s infinite ease-in-out;
 }
-.countdown-num {
-  font-size: 2.4rem;
-  font-weight: 800;
-  color: #ffffff;
+@keyframes blink-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
 }
-@keyframes pulse-countdown {
-  0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(224, 61, 90, 0.3); }
-  50% { transform: scale(1.06); box-shadow: 0 0 32px rgba(224, 61, 90, 0.6); }
-}
-.countdown-info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.countdown-title {
-  font-size: 1.15rem;
-  font-weight: 700;
+.countdown-text {
+  font-size: 0.85rem;
+  font-weight: 600;
   color: #ffffff;
   letter-spacing: 0.01em;
 }
-.countdown-sub {
-  font-size: 0.85rem;
+.btn-cancel-text {
+  font-size: 0.8rem;
+  font-weight: 700;
   color: var(--muted);
-}
-.btn-cancel-countdown {
-  padding: 8px 22px;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  color: #ffffff;
-  font-size: 0.85rem;
-  font-weight: 600;
+  background: none;
+  border: none;
+  text-decoration: underline;
   cursor: pointer;
-  transition: all 0.15s;
+  margin-left: 4px;
 }
-.btn-cancel-countdown:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: rgba(224, 61, 90, 0.1);
+.btn-cancel-text:hover {
+  color: #ffffff;
 }
 
 /* Media Title Top Overlay */
@@ -1975,7 +2184,7 @@ onMounted(async () => {
   pointer-events: none;
 }
 .m-title { font-size: 0.95rem; font-weight: 700; color: #ffffff; }
-.m-ep { font-size: 0.85rem; color: var(--gold); }
+.m-ep { font-size: 0.85rem; color: #ffffff; opacity: 0.85; }
 .m-year { font-size: 0.8rem; color: var(--muted); }
 
 /* Direct URL Bar Overlay */
@@ -2008,17 +2217,17 @@ onMounted(async () => {
 .url-bar input:focus { outline: none; }
 .btn-load-url {
   padding: 6px 16px;
-  background: var(--accent);
+  background: #ffffff;
   border-radius: var(--radius-sm);
   font-size: 0.85rem;
   font-weight: 600;
-  color: #fff;
+  color: #000000;
   border: none;
   flex-shrink: 0;
   cursor: pointer;
-  transition: filter 0.15s;
+  transition: opacity 0.15s;
 }
-.btn-load-url:hover:not(:disabled) { filter: brightness(1.15); }
+.btn-load-url:hover:not(:disabled) { opacity: 0.9; }
 .btn-close-url {
   background: none;
   border: none;
@@ -2032,8 +2241,8 @@ onMounted(async () => {
 .controls {
   position: absolute;
   bottom: 0; left: 0; right: 0;
-  background: linear-gradient(0deg, rgba(0, 0, 0, 0.95) 0%, rgba(0, 0, 0, 0.6) 60%, transparent 100%);
-  padding: 40px 20px 14px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.5) 60%, transparent 100%);
+  padding: 36px 20px 14px;
   z-index: 20;
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
@@ -2052,16 +2261,16 @@ onMounted(async () => {
 /* Scrub Bar */
 .scrub-bar-wrap {
   position: relative;
-  height: 8px;
-  background: rgba(255, 255, 255, 0.25);
-  border-radius: 4px;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
   cursor: pointer;
   display: flex;
   align-items: center;
   transition: height 0.15s;
 }
 .scrub-bar-wrap:hover {
-  height: 10px;
+  height: 8px;
 }
 .scrub-bar-wrap.readonly-scrub {
   cursor: default;
@@ -2069,10 +2278,10 @@ onMounted(async () => {
 .scrub-progress {
   position: absolute;
   left: 0; top: 0; bottom: 0;
-  background: var(--accent);
-  border-radius: 4px;
+  background: #ffffff;
+  border-radius: 3px;
   pointer-events: none;
-  box-shadow: 0 0 10px rgba(224, 61, 90, 0.5);
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.4);
 }
 .scrub-bar {
   position: absolute;
@@ -2095,49 +2304,40 @@ onMounted(async () => {
 .controls-left, .controls-right {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .ctrl-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 38px; height: 38px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: var(--radius-sm);
+  width: 36px; height: 36px;
+  background: transparent !important;
+  border: none !important;
   color: #ffffff;
+  opacity: 0.85;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: opacity 0.15s, transform 0.1s;
   position: relative;
+  padding: 0;
 }
 .ctrl-btn:hover {
-  background: rgba(255, 255, 255, 0.25);
-  border-color: rgba(255, 255, 255, 0.4);
-  transform: translateY(-1px);
-}
-.ctrl-btn.main-play-btn {
-  background: var(--accent);
-  border-color: var(--accent);
-  width: 42px; height: 42px;
-}
-.ctrl-btn.main-play-btn:hover {
-  filter: brightness(1.2);
-  box-shadow: 0 4px 16px rgba(224, 61, 90, 0.5);
+  background: transparent !important;
+  border: none !important;
+  opacity: 1;
+  transform: scale(1.08);
 }
 .ctrl-btn.active {
-  color: #ffffff;
-  background: var(--accent);
-  border-color: var(--accent);
+  opacity: 1;
 }
 .sub-label {
   position: absolute;
-  bottom: 2px;
-  right: 2px;
+  bottom: 0px;
+  right: -2px;
   font-size: 0.55rem;
   font-weight: 800;
-  background: var(--accent);
-  color: #fff;
+  background: #ffffff;
+  color: #000000;
   padding: 1px 3px;
   border-radius: 2px;
   line-height: 1;
@@ -2148,18 +2348,11 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: var(--radius-sm);
-  padding: 0 8px 0 0;
-}
-.vol-wrap .ctrl-btn {
   background: transparent;
-  border: none;
 }
 .vol-slider {
-  width: 70px;
-  accent-color: var(--accent);
+  width: 65px;
+  accent-color: #ffffff;
   cursor: pointer;
 }
 
@@ -2169,12 +2362,11 @@ onMounted(async () => {
   font-weight: 600;
   color: #ffffff;
   font-variant-numeric: tabular-nums;
-  margin-left: 6px;
-  letter-spacing: 0.02em;
+  margin-left: 4px;
 }
 .time-cur { color: #ffffff; }
 .time-sep { margin: 0 4px; color: rgba(255, 255, 255, 0.4); }
-.time-dur { color: rgba(255, 255, 255, 0.7); }
+.time-dur { color: rgba(255, 255, 255, 0.6); }
 
 /* ── Chat Sidebar ────────────────────────────────────────────────────────── */
 .chat-sidebar {
@@ -2203,7 +2395,7 @@ onMounted(async () => {
   gap: 8px;
   font-size: 0.88rem;
   font-weight: 700;
-  color: var(--text);
+  color: #ffffff;
 }
 .icon-btn.sm {
   width: 26px; height: 26px;
@@ -2241,7 +2433,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 6px;
-  border-left: 2px solid var(--accent);
+  border-left: 2px solid rgba(255, 255, 255, 0.4);
 }
 .sys-time { color: var(--border-light); }
 .msg-header {
@@ -2256,9 +2448,9 @@ onMounted(async () => {
 .chat-host-tag {
   font-size: 0.58rem;
   font-weight: 800;
-  background: rgba(245, 166, 35, 0.2);
-  color: var(--gold);
-  border: 1px solid rgba(245, 166, 35, 0.4);
+  background: rgba(255, 255, 255, 0.15);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
   padding: 1px 3px;
   border-radius: 2px;
   margin-left: 4px;
@@ -2288,21 +2480,21 @@ onMounted(async () => {
   font-size: 0.85rem;
   color: var(--text);
 }
-.chat-input-row input:focus { border-color: var(--accent); }
+.chat-input-row input:focus { border-color: rgba(255, 255, 255, 0.4); }
 .btn-send {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 36px; height: 36px;
-  background: var(--accent);
+  background: #ffffff;
   border: none;
   border-radius: var(--radius-sm);
-  color: #fff;
+  color: #000000;
   cursor: pointer;
-  transition: filter 0.15s;
+  transition: opacity 0.15s;
 }
-.btn-send:hover:not(:disabled) { filter: brightness(1.15); }
-.btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-send:hover:not(:disabled) { opacity: 0.9; }
+.btn-send:disabled { opacity: 0.35; cursor: not-allowed; }
 
 /* ── Toast ───────────────────────────────────────────────────────────────── */
 .toast {
