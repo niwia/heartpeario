@@ -9,11 +9,11 @@
         </div>
         <h2>Room Not Found</h2>
         <p class="nf-desc">
-          Room <code>{{ roomNotFoundCode }}</code> doesn't exist or expired because all users left.
+          Room <code>{{ roomNotFoundCode }}</code> does not exist or expired because all users left.
         </p>
         <div class="nf-actions">
           <router-link to="/" class="btn-return-home">
-            Return Home &amp; Create Room
+            Return Home and Create Room
           </router-link>
         </div>
       </div>
@@ -32,12 +32,12 @@
             ref="joinNameInputEl"
             v-model="joinNameInput"
             type="text"
-            placeholder="Your name…"
+            placeholder="Your name..."
             maxlength="25"
             autofocus
           />
           <button type="submit" class="btn-join-room" :disabled="!joinNameInput.trim()">
-            Join Watch Party →
+            Join Watch Party
           </button>
         </form>
       </div>
@@ -51,7 +51,7 @@
           <input
             v-model="renameInput"
             type="text"
-            placeholder="Your name…"
+            placeholder="Your name..."
             maxlength="25"
           />
           <div class="rename-actions">
@@ -66,7 +66,7 @@
     <header class="header">
       <div class="header-left">
         <router-link to="/" class="logo">
-          <span class="logo-heart">♥</span>
+          <span class="logo-badge">HP</span>
           <span class="logo-text">HeartPeario</span>
         </router-link>
 
@@ -77,7 +77,7 @@
           <span v-if="copied" class="copied-tooltip">Copied!</span>
         </div>
 
-        <button class="header-btn" @click="showSearchModal = true" title="Search Movies & Shows with Stremio Addons">
+        <button v-if="room.isHost" class="header-btn" @click="showSearchModal = true" title="Search Movies & Shows with Stremio Addons">
           <Icon name="search" size="15" />
           <span>Search</span>
         </button>
@@ -87,15 +87,21 @@
           <span>Addons</span>
         </button>
 
-        <button class="header-btn" @click="toggleUrlBar" title="Paste Direct Stream URL">
+        <button v-if="room.isHost" class="header-btn" @click="toggleUrlBar" title="Paste Direct Stream URL">
           <Icon name="link" size="15" />
           <span>Direct URL</span>
         </button>
       </div>
 
       <div class="header-right">
+        <!-- Host Indicator Badge -->
+        <div class="host-pill" :class="{ 'is-you': room.isHost }">
+          <span class="host-pill-tag">HOST</span>
+          <span class="host-pill-name">{{ hostDisplayName }}</span>
+        </div>
+
         <!-- Users dropdown / list -->
-        <div class="users-pill">
+        <div class="users-pill" @click="showUsersMenu = !showUsersMenu" title="View room members">
           <Icon name="user" size="14" />
           <span class="user-count">{{ room.users.length }}</span>
           <div class="users-avatar-stack">
@@ -104,11 +110,51 @@
               :key="u.id"
               class="user-dot"
               :style="{ background: u.color }"
-              :title="getPeerSyncTitle(u)"
+              :title="u.name + (u.id === room.hostId ? ' (Host)' : '')"
             >
               {{ u.name.charAt(0).toUpperCase() }}
-              <span class="sync-dot-badge" :class="getPeerSyncBadgeClass(u.id)"></span>
+              <span v-if="u.id === room.hostId" class="host-dot-badge">H</span>
             </span>
+          </div>
+        </div>
+
+        <!-- Users Dropdown Menu / Host Delegation -->
+        <div v-if="showUsersMenu" class="users-dropdown-backdrop" @click="showUsersMenu = false">
+          <div class="users-dropdown" @click.stop>
+            <div class="users-dropdown-header">
+              <span>Room Viewers ({{ room.users.length }})</span>
+              <button class="close-drop-btn" @click="showUsersMenu = false">
+                <Icon name="close" size="12" />
+              </button>
+            </div>
+            <div class="users-dropdown-list">
+              <div
+                v-for="u in room.users"
+                :key="u.id"
+                class="user-dropdown-item"
+              >
+                <div class="user-item-left">
+                  <span class="user-avatar-sm" :style="{ background: u.color }">
+                    {{ u.name.charAt(0).toUpperCase() }}
+                  </span>
+                  <span class="user-item-name">
+                    {{ u.name }}
+                    <span v-if="u.id === room.you?.id" class="you-tag">(You)</span>
+                  </span>
+                  <span v-if="u.id === room.hostId" class="host-tag">HOST</span>
+                </div>
+                <div class="user-item-right">
+                  <button
+                    v-if="room.isHost && u.id !== room.you?.id"
+                    class="btn-make-host"
+                    @click="transferHost(u.id)"
+                    title="Make this user Room Host"
+                  >
+                    Make Host
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -120,7 +166,7 @@
         >
           <span class="user-color-dot" :style="{ background: profileStore.current.avatarColor }"></span>
           <span class="user-chip-name">{{ profileStore.current.name }}</span>
-          <span class="vault-mini-tag">🔒 Vault</span>
+          <span class="vault-mini-tag">Vault</span>
         </button>
 
         <!-- Toggle Chat -->
@@ -147,7 +193,7 @@
         @mousemove="showControls"
         @mouseleave="scheduleHideControls"
         @click.self="togglePlay"
-        :class="{ 'controls-hidden': controlsHidden && !paused && !!room.url }"
+        :class="{ 'controls-hidden': controlsHidden && !paused && !!room.url && !room.activeCountdown }"
       >
 
         <!-- Placeholder when no URL -->
@@ -157,8 +203,10 @@
               <Icon name="play" size="42" />
             </div>
             <p class="ph-title">No stream playing</p>
-            <p class="ph-sub">Search for a movie or TV show with Stremio addons, or paste a direct video link.</p>
-            <div class="placeholder-actions">
+            <p class="ph-sub">
+              {{ room.isHost ? 'Search for a movie or TV show with Stremio addons, or paste a direct video link.' : 'Waiting for the host to select a stream...' }}
+            </p>
+            <div v-if="room.isHost" class="placeholder-actions">
               <button class="btn-ph-search" @click="showSearchModal = true">
                 <Icon name="search" size="16" />
                 <span>Search Catalog</span>
@@ -172,24 +220,18 @@
         </div>
 
         <!-- Buffering overlay -->
-        <div v-if="room.url && buffering && !paused" class="buffering-overlay" aria-label="Buffering">
+        <div v-if="room.url && buffering && !paused && !room.activeCountdown" class="buffering-overlay" aria-label="Buffering">
           <div class="buf-spinner"></div>
         </div>
 
-        <!-- Video element with Subtitles Track for Web & Native iOS/Android Players -->
+        <!-- Video element -->
         <video
           v-show="room.url"
           ref="videoEl"
           :src="room.url || undefined"
           preload="metadata"
           playsinline
-          webkit-playsinline
-          x-webkit-airplay="allow"
           crossorigin="anonymous"
-          @play="onPlay"
-          @pause="onPause"
-          @seeking="onSeeking"
-          @seeked="onSeeked"
           @timeupdate="onTimeUpdate"
           @durationchange="onDurationChange"
           @waiting="onWaiting"
@@ -218,44 +260,35 @@
           />
         </video>
 
-        <!-- All-Peers Buffer & Readiness Sync Banner (ONLY shown when paused & waiting for peers) -->
-        <div v-if="roomReadiness.waiting && paused && room.url && room.users.length > 1" class="readiness-overlay">
-          <div class="readiness-card">
-            <div class="readiness-spinner"></div>
-            <div class="readiness-info">
-              <span class="readiness-title">Syncing Viewers… ({{ roomReadiness.readyCount }}/{{ roomReadiness.totalCount }} Ready)</span>
-              <span v-if="roomReadiness.waitingFor.length" class="readiness-sub">
-                Waiting for: <strong>{{ roomReadiness.waitingFor.join(', ') }}</strong> to buffer
-              </span>
+        <!-- ── 3-Second Synchronized Action Countdown Overlay ──────────────── -->
+        <div v-if="room.activeCountdown && room.url" class="countdown-overlay">
+          <div class="countdown-card">
+            <div class="countdown-circle">
+              <span class="countdown-num">{{ countdownSecondsRemaining }}</span>
             </div>
-            <button v-if="room.isHost" class="btn-force-play" @click="forcePlayNow" title="Start playing without waiting">
-              Force Play
+            <div class="countdown-info">
+              <span class="countdown-title">{{ countdownTitle }}</span>
+              <span class="countdown-sub">{{ countdownSubtitle }}</span>
+            </div>
+            <button
+              v-if="canCancelCountdown"
+              class="btn-cancel-countdown"
+              @click="cancelCountdown"
+              title="Cancel countdown"
+            >
+              Cancel
             </button>
           </div>
         </div>
 
-        <!-- Tap-to-Play Overlay for Mobile Autoplay Policy -->
-        <div v-if="room.url && needsUserTapToPlay" class="tap-play-overlay" @click="handleUserTapToPlay">
-          <div class="tap-play-btn">
-            <Icon name="play" size="28" />
-            <span>Tap to Watch in Sync</span>
-          </div>
-        </div>
-
-        <!-- Tap-to-Unmute Banner for Mobile Autoplay Fallback -->
-        <div v-if="needsUserUnmute && !paused && room.url" class="unmute-banner" @click="handleUnmute">
-          <Icon name="mute" size="18" />
-          <span>Playing in sync (Muted) — <strong>Tap to Unmute</strong></span>
-        </div>
-
         <!-- Direct URL bar -->
-        <div v-if="showUrlBar" class="url-bar-wrap">
+        <div v-if="showUrlBar && room.isHost" class="url-bar-wrap">
           <form class="url-bar" @submit.prevent="setDirectUrl">
             <input
               ref="urlInputEl"
               v-model="urlInput"
               type="url"
-              placeholder="Paste direct video URL (MP4, MKV, WebM, HLS m3u8)…"
+              placeholder="Paste direct video URL (MP4, MKV, WebM, HLS m3u8)..."
               spellcheck="false"
             />
             <button type="submit" class="btn-load-url" :disabled="!urlInput.trim()">
@@ -279,7 +312,7 @@
           <div class="controls-inner">
 
             <!-- Progress bar -->
-            <div class="scrub-bar-wrap">
+            <div class="scrub-bar-wrap" :class="{ 'readonly-scrub': !room.isHost }">
               <input
                 type="range"
                 class="scrub-bar"
@@ -290,7 +323,7 @@
                 @input="onSeekInput"
                 @change="onSeekEnd"
                 @mousedown="isUserScrubbing = true"
-                @touchstart="isUserScrubbing = true"
+                :disabled="!room.isHost"
                 aria-label="Seek video"
               />
               <div
@@ -302,22 +335,36 @@
             <!-- Buttons row -->
             <div class="controls-row">
               <div class="controls-left">
-                <!-- Play / Pause -->
-                <button class="ctrl-btn" @click="togglePlay" :title="paused ? 'Play (Space)' : 'Pause (Space)'">
+                <!-- Play / Pause Button -->
+                <button
+                  class="ctrl-btn"
+                  @click="togglePlay"
+                  :title="playPauseButtonTitle"
+                >
                   <Icon :name="paused ? 'play' : 'pause'" size="20" />
                 </button>
 
-                <!-- Backward 10s -->
-                <button class="ctrl-btn" @click="skip(-10)" title="Rewind 10s">
+                <!-- Backward 10s (Host Only) -->
+                <button
+                  v-if="room.isHost"
+                  class="ctrl-btn"
+                  @click="skip(-10)"
+                  title="Rewind 10s (3s countdown)"
+                >
                   <Icon name="backward" size="18" />
                 </button>
 
-                <!-- Forward 10s -->
-                <button class="ctrl-btn" @click="skip(10)" title="Forward 10s">
+                <!-- Forward 10s (Host Only) -->
+                <button
+                  v-if="room.isHost"
+                  class="ctrl-btn"
+                  @click="skip(10)"
+                  title="Forward 10s (3s countdown)"
+                >
                   <Icon name="fastfw" size="18" />
                 </button>
 
-                <!-- Volume / Mute -->
+                <!-- Volume / Mute (Local) -->
                 <div class="vol-wrap">
                   <button class="ctrl-btn" @click="toggleMute" :title="isMuted ? 'Unmute (M)' : 'Mute (M)'">
                     <Icon :name="isMuted || volume === 0 ? 'mute' : (volume > 0.5 ? 'vol-high' : 'vol-low')" size="18" />
@@ -353,26 +400,6 @@
                   <span v-if="room.currentSubtitle" class="sub-label">
                     {{ room.currentSubtitle.lang?.slice(0, 3).toUpperCase() }}
                   </span>
-                </button>
-
-                <!-- AirPlay -->
-                <button
-                  v-if="airplayAvailable"
-                  class="ctrl-btn"
-                  @click="triggerAirPlay"
-                  title="Stream with Apple AirPlay"
-                >
-                  <Icon name="airplay" size="18" />
-                </button>
-
-                <!-- Google Cast (Chromecast) -->
-                <button
-                  class="ctrl-btn"
-                  :class="{ active: isCasting }"
-                  @click="triggerChromecast"
-                  title="Stream to TV with Chromecast"
-                >
-                  <Icon name="cast" size="18" />
                 </button>
 
                 <!-- Fullscreen -->
@@ -424,79 +451,78 @@
             <!-- User message -->
             <template v-else>
               <div class="msg-header">
-                <span class="msg-author" :style="{ color: msg.color }">{{ msg.name }}</span>
+                <span class="msg-author" :style="{ color: msg.color }">
+                  {{ msg.name }}
+                  <span v-if="msg.userId === room.hostId" class="chat-host-tag">HOST</span>
+                </span>
                 <span class="msg-time">{{ fmtTimestamp(msg.ts) }}</span>
               </div>
-              <div class="msg-content">{{ msg.content }}</div>
+              <div class="msg-body">{{ msg.content }}</div>
             </template>
           </div>
         </div>
 
-        <!-- Chat Input -->
-        <form class="chat-footer" @submit.prevent="sendMessage">
+        <!-- Chat input -->
+        <form class="chat-input-row" @submit.prevent="sendMessage">
           <input
             v-model="chatInput"
             type="text"
-            placeholder="Type a message…"
+            placeholder="Type a message..."
             maxlength="300"
-            autocomplete="off"
           />
-          <button type="submit" class="btn-send" :disabled="!chatInput.trim()" title="Send">
-            <Icon name="send" size="16" />
+          <button type="submit" class="btn-send" :disabled="!chatInput.trim()">
+            <Icon name="send" size="15" />
           </button>
         </form>
       </aside>
 
     </div>
 
-    <!-- ── Stremio Catalog Search Modal ─────────────────────────────── -->
+    <!-- ── Toast ─────────────────────────────────────────────────────── -->
+    <div v-if="toast" class="toast">{{ toast }}</div>
+
+    <!-- ── Modals ────────────────────────────────────────────────────── -->
     <SearchMediaModal
       v-if="showSearchModal"
       @close="showSearchModal = false"
-      @selectStream="onStreamSelected"
+      @stream-selected="onStreamSelected"
     />
 
-    <!-- ── Addon Manager Modal ──────────────────────────────────────── -->
     <AddonManagerModal
       v-if="showAddonsModal"
       @close="showAddonsModal = false"
+      @stream-selected="onStreamSelected"
     />
 
-    <!-- ── Subtitles & Audio Modal ──────────────────────────────────── -->
     <SubtitlesModal
       v-if="showSubtitlesModal"
-      :availableSubs="room.subtitles"
-      :currentSubtitle="room.currentSubtitle"
-      :offsetMs="room.subtitleOffsetMs"
+      :available-subtitles="room.subtitles"
+      :current-subtitle="room.currentSubtitle"
+      :offset-ms="room.subtitleOffsetMs"
+      :media-meta="room.mediaMeta"
       @close="showSubtitlesModal = false"
-      @selectSubtitle="onSelectSubtitle"
-      @setOffset="onSetSubtitleOffset"
-      @loadCustomSubtitle="onLoadCustomSubtitle"
+      @select="onSelectSubtitle"
+      @set-offset="onSetSubtitleOffset"
+      @load-custom="onLoadCustomSubtitle"
     />
 
-    <!-- ── Encrypted Profile & Watch History Modal ───────────────────── -->
     <ProfileModal
       v-if="showProfileModal"
       @close="showProfileModal = false"
-      @selectStream="onStreamSelected"
+      @stream-selected="onStreamSelected"
+      @rename="openRenameModal"
     />
-
-    <!-- Error toast -->
-    <Transition name="toast">
-      <div v-if="toast" class="toast" role="alert">{{ toast }}</div>
-    </Transition>
 
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useRoomStore } from '@/stores/room';
 import { useProfileStore } from '@/stores/profile';
 import socket from '@/services/socket';
-import { createVttUrlFromRemote, srtToVtt } from '@/services/subtitle.service';
-import castService from '@/services/cast.service';
+import { srtToVtt, createVttUrlFromRemote } from '@/services/subtitle.service';
 
 import Icon from '@/components/Icon.vue';
 import SearchMediaModal from '@/components/SearchMediaModal.vue';
@@ -509,13 +535,14 @@ const router = useRouter();
 const room = useRoomStore();
 const profileStore = useProfileStore();
 
-// ── Modals & Casting ──────────────────────────────────────────────────────
+// ── Modals ────────────────────────────────────────────────────────────────
 const showSearchModal = ref(false);
 const showAddonsModal = ref(false);
 const showSubtitlesModal = ref(false);
 const showProfileModal = ref(false);
 const showJoinPrompt = ref(false);
 const showRenameModal = ref(false);
+const showUsersMenu = ref(false);
 const joinNameInput = ref('');
 const renameInput = ref('');
 const joinNameInputEl = ref(null);
@@ -527,13 +554,9 @@ const roomNotFound = ref(false);
 const roomNotFoundCode = ref('');
 
 const activeSubTrackBlobUrl = ref(null);
-const isCasting = ref(false);
-const airplayAvailable = ref(false);
-const needsUserTapToPlay = ref(false);
-const needsUserUnmute = ref(false);
 const roomTsMap = ref({});
 
-// ── Refs ──────────────────────────────────────────────────────────────────
+// ── Player Refs ───────────────────────────────────────────────────────────
 const videoEl    = ref(null);
 const urlInputEl = ref(null);
 const messagesEl = ref(null);
@@ -556,92 +579,219 @@ const showUrlBar = ref(false);
 const copied     = ref(false);
 const toast      = ref('');
 const controlsHidden = ref(false);
-const roomReadiness = ref({ waiting: false, readyCount: 0, totalCount: 0, waitingFor: [] });
 
-// ── Sync Engine State ─────────────────────────────────────────────────────
-let isApplyingRemoteSync = false;
-let remoteSyncTimer = null;
-let pendingSync = null;
-let lastAppliedSeq = 0;
-let currentPlayPromise = null;
+// ── 3-Second Action Countdown State ───────────────────────────────────────
+const countdownSecondsRemaining = ref(3);
+let countdownInterval = null;
 let hideTimer = null;
 let toastTimer = null;
-let seekDebounceTimer = null;
 let heartbeatTimer = null;
+let lastAppliedSeq = 0;
+
+const hostDisplayName = computed(() => {
+  if (room.isHost) return 'You';
+  const host = room.users.find(u => u.id === room.hostId);
+  return host ? host.name : 'Host';
+});
+
+const playPauseButtonTitle = computed(() => {
+  if (room.isHost) {
+    return paused.value ? 'Start 3s countdown to Play (Space)' : 'Start 3s countdown to Pause (Space)';
+  }
+  return paused.value ? 'Request Resume (3s countdown)' : 'Request Pause (3s countdown)';
+});
+
+const countdownTitle = computed(() => {
+  if (!room.activeCountdown) return '';
+  const action = room.activeCountdown.action;
+  if (action === 'PLAY') return 'Resuming Playback in 3s...';
+  if (action === 'PAUSE') return 'Pausing in 3s...';
+  if (action === 'SEEK') return `Seeking to ${fmtTime(room.activeCountdown.targetTime)} in 3s...`;
+  return 'Action in 3s...';
+});
+
+const countdownSubtitle = computed(() => {
+  if (!room.activeCountdown) return '';
+  const initiator = room.activeCountdown.initiatedByName || 'Viewer';
+  if (room.activeCountdown.initiatedBy === room.you?.id) {
+    return 'Initiated by you';
+  }
+  return `Requested by ${initiator}`;
+});
+
+const canCancelCountdown = computed(() => {
+  if (!room.activeCountdown) return false;
+  return room.isHost || room.activeCountdown.initiatedBy === room.you?.id;
+});
 
 function logDebug(...args) {
   const ts = new Date().toTimeString().split(' ')[0];
   console.log(`[HeartPeario ${ts}]`, ...args);
 }
 
-// ── Peer Sync Status Helpers ──────────────────────────────────────────────
-function getPeerSyncBadgeClass(userId) {
-  if (userId === room.you?.id) return 'sync-self';
-  const peer = roomTsMap.value[userId];
-  if (!peer) return 'sync-unknown';
-  if (peer.buffering || !peer.ready) return 'sync-buffering';
-  const myTime = videoEl.value?.currentTime || 0;
-  const drift = Math.abs((peer.time || 0) - myTime);
-  if (drift < 1.0) return 'sync-good';
-  if (drift < 3.0) return 'sync-catching-up';
-  return 'sync-lagging';
-}
+// ── Player Controls & Host Action Countdown Dispatch ──────────────────────
+function togglePlay() {
+  if (!videoEl.value || !room.url) return;
+  if (room.activeCountdown) {
+    cancelCountdown();
+    return;
+  }
 
-function getPeerSyncTitle(u) {
-  const isYou = u.id === room.you?.id ? ' (You)' : '';
-  const peer = roomTsMap.value[u.id];
-  if (!peer) return `${u.name}${isYou}`;
-  if (peer.buffering || !peer.ready) return `${u.name}${isYou}: Buffering…`;
-  return `${u.name}${isYou} at ${fmtTime(peer.time || 0)}`;
-}
-
-function handleUnmute() {
-  if (!videoEl.value) return;
-  videoEl.value.muted = false;
-  isMuted.value = false;
-  needsUserUnmute.value = false;
-  videoEl.value.volume = volume.value;
-  doToast('Audio unmuted', 1500);
-}
-
-// ── Promise-Guarded Play & Pause ──────────────────────────────────────────
-async function safePlay() {
-  if (!videoEl.value) return;
-  needsUserTapToPlay.value = false;
-  try {
-    currentPlayPromise = videoEl.value.play();
-    await currentPlayPromise;
-    needsUserUnmute.value = false;
-  } catch (err) {
-    logDebug(`Play rejected: ${err?.name} - ${err?.message}`);
-    if (err?.name === 'NotAllowedError' || err?.name === 'AbortError') {
-      // Auto-mute fallback to satisfy browser autoplay policy on mobile/Safari
-      if (videoEl.value && !videoEl.value.muted) {
-        logDebug('Autoplay blocked with sound: auto-muting for continuous sync');
-        videoEl.value.muted = true;
-        isMuted.value = true;
-        try {
-          currentPlayPromise = videoEl.value.play();
-          await currentPlayPromise;
-          needsUserUnmute.value = true;
-          return;
-        } catch (e2) {
-          logDebug(`Muted autoplay also blocked: ${e2?.message}`);
-        }
-      }
-      needsUserTapToPlay.value = true;
+  const currentPos = videoEl.value.currentTime || 0;
+  if (room.isHost) {
+    socket.send('player.countdown_action', {
+      action: paused.value ? 'PLAY' : 'PAUSE',
+      time: currentPos,
+    });
+  } else {
+    if (paused.value) {
+      socket.send('player.request_play', { time: currentPos });
+    } else {
+      socket.send('player.request_pause', { time: currentPos });
     }
-  } finally {
-    currentPlayPromise = null;
   }
 }
 
-async function safePause() {
-  if (!videoEl.value) return;
-  if (currentPlayPromise) {
-    try { await currentPlayPromise; } catch {}
+function skip(deltaSeconds) {
+  if (!videoEl.value || !room.url || !room.isHost) return;
+  const currentPos = videoEl.value.currentTime || 0;
+  const newTime = Math.max(0, Math.min(duration.value || 999999, currentPos + deltaSeconds));
+  socket.send('player.countdown_action', {
+    action: 'SEEK',
+    time: newTime,
+  });
+}
+
+function onSeekInput(e) {
+  if (!room.isHost) return;
+  currentTime.value = parseFloat(e.target.value);
+}
+
+function onSeekEnd(e) {
+  isUserScrubbing.value = false;
+  if (!room.isHost) return;
+  const targetTime = parseFloat(e.target.value);
+  socket.send('player.countdown_action', {
+    action: 'SEEK',
+    time: targetTime,
+  });
+}
+
+function cancelCountdown() {
+  socket.send('player.cancel_countdown');
+}
+
+function transferHost(newHostId) {
+  if (!room.isHost) return;
+  socket.send('room.set_host', { newHostId });
+  showUsersMenu.value = false;
+}
+
+function toggleMute() {
+  if (isMuted.value) {
+    isMuted.value = false;
+    volume.value = prevVolume.value || 1;
+  } else {
+    prevVolume.value = volume.value;
+    isMuted.value = true;
+    volume.value = 0;
   }
-  videoEl.value.pause();
+  if (videoEl.value) {
+    videoEl.value.volume = isMuted.value ? 0 : volume.value;
+    videoEl.value.muted = isMuted.value;
+  }
+}
+
+function toggleFullscreen() {
+  const el = document.querySelector('.player-wrap');
+  if (!el) return;
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  } else {
+    el.requestFullscreen().catch(() => {});
+  }
+}
+
+function onTimeUpdate() {
+  if (!isUserScrubbing.value && videoEl.value) {
+    currentTime.value = videoEl.value.currentTime;
+  }
+}
+
+function onDurationChange() {
+  if (videoEl.value) duration.value = videoEl.value.duration;
+}
+
+function onWaiting() {
+  if (!paused.value) buffering.value = true;
+}
+
+function onCanPlay() {
+  buffering.value = false;
+  if (videoEl.value) {
+    videoEl.value.volume = isMuted.value ? 0 : volume.value;
+    videoEl.value.muted = isMuted.value;
+  }
+}
+
+function onVideoError() {
+  doToast('Could not load stream - check URL or provider');
+  buffering.value = false;
+}
+
+// ── Smart Synchronization Engine ──────────────────────────────────────────
+async function applySync(data) {
+  if (!videoEl.value || !data) return;
+
+  if (data.seq && lastAppliedSeq && data.seq <= lastAppliedSeq) {
+    return;
+  }
+  if (data.seq) lastAppliedSeq = data.seq;
+
+  const target = Math.max(0, data.time || 0);
+  logDebug(`ApplySync #${data.seq || 0}: ${data.paused ? 'PAUSE' : 'PLAY'} at ${fmtTime(target)}`);
+
+  if (data.paused) {
+    videoEl.value.pause();
+    if (Math.abs(videoEl.value.currentTime - target) > 0.4) {
+      videoEl.value.currentTime = target;
+    }
+    paused.value = true;
+  } else {
+    if (Math.abs(videoEl.value.currentTime - target) > 1.5) {
+      videoEl.value.currentTime = target;
+    }
+    try {
+      await videoEl.value.play();
+    } catch (err) {
+      logDebug('Play error on applySync:', err?.message);
+    }
+    paused.value = false;
+  }
+}
+
+function startCountdownTimer(countdownData) {
+  if (countdownInterval) clearInterval(countdownInterval);
+  room.activeCountdown = countdownData;
+
+  // Pre-seek buffer during countdown if seek or play
+  if (videoEl.value && typeof countdownData.targetTime === 'number') {
+    if (countdownData.action === 'SEEK' || (countdownData.action === 'PLAY' && paused.value)) {
+      videoEl.value.currentTime = countdownData.targetTime;
+    }
+  }
+
+  const updateRemaining = () => {
+    if (!room.activeCountdown) {
+      if (countdownInterval) clearInterval(countdownInterval);
+      return;
+    }
+    const msLeft = room.activeCountdown.executeAt - Date.now();
+    countdownSecondsRemaining.value = Math.max(1, Math.ceil(msLeft / 1000));
+  };
+
+  updateRemaining();
+  countdownInterval = setInterval(updateRemaining, 100);
 }
 
 // ── Subtitle Management ───────────────────────────────────────────────────
@@ -657,7 +807,6 @@ async function loadCurrentSubtitle() {
     const vttUrl = await createVttUrlFromRemote(room.currentSubtitle.url, room.subtitleOffsetMs);
     if (activeSubTrackBlobUrl.value) URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = vttUrl;
-    logDebug('Loaded subtitle track:', room.currentSubtitle.lang);
   } catch (err) {
     logDebug('Failed to load subtitle:', err);
     doToast('Failed to load subtitle track');
@@ -692,6 +841,7 @@ function onLoadCustomSubtitle({ name, content }) {
 
 // ── Stream / URL Management ───────────────────────────────────────────────
 function onStreamSelected({ url, mediaMeta, subtitles }) {
+  if (!room.isHost) return;
   room.url = url;
   room.mediaMeta = mediaMeta;
   room.subtitles = subtitles || [];
@@ -710,7 +860,6 @@ function onStreamSelected({ url, mediaMeta, subtitles }) {
     loadCurrentSubtitle();
   }
 
-  // Record to Encrypted Profile Watch History
   if (url && mediaMeta) {
     profileStore.recordWatch({
       id: mediaMeta.id,
@@ -728,6 +877,7 @@ function onStreamSelected({ url, mediaMeta, subtitles }) {
 }
 
 function toggleUrlBar() {
+  if (!room.isHost) return;
   showUrlBar.value = !showUrlBar.value;
   if (showUrlBar.value) {
     nextTick(() => urlInputEl.value?.focus());
@@ -735,11 +885,13 @@ function toggleUrlBar() {
 }
 
 function openUrlBar() {
+  if (!room.isHost) return;
   showUrlBar.value = true;
   nextTick(() => urlInputEl.value?.focus());
 }
 
 function setDirectUrl() {
+  if (!room.isHost) return;
   const url = urlInput.value.trim();
   if (!url) return;
   room.url = url;
@@ -756,275 +908,6 @@ function setDirectUrl() {
   showUrlBar.value = false;
 }
 
-// ── AirPlay & Cast ────────────────────────────────────────────────────────
-function triggerAirPlay() {
-  if (videoEl.value) {
-    castService.showAirPlayPicker(videoEl.value);
-  }
-}
-
-function triggerChromecast() {
-  if (isCasting.value) {
-    castService.stopChromecast();
-  } else if (room.url) {
-    castService.requestChromecastSession(
-      room.url,
-      room.mediaMeta,
-      currentTime.value,
-      paused.value
-    );
-  } else {
-    doToast('Load a video first to cast to TV');
-  }
-}
-
-// ── Fullscreen Support (with iOS Safari webkitEnterFullscreen) ────────────
-function isAppleDevice() {
-  if (typeof navigator === 'undefined') return false;
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) || 
-         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
-         (/^((?!chrome|android).)*safari/i.test(navigator.userAgent));
-}
-
-function toggleFullscreen() {
-  const el = document.querySelector('.player-wrap');
-  if (!videoEl.value) return;
-
-  // On Apple Safari / iOS / iPadOS, ALWAYS launch native AVPlayer video fullscreen
-  if (isAppleDevice() && typeof videoEl.value.webkitEnterFullscreen === 'function') {
-    videoEl.value.webkitEnterFullscreen();
-    return;
-  }
-
-  // Standard fullscreen API for Desktop & Android
-  if (document.fullscreenElement || document.webkitFullscreenElement) {
-    if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
-    else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
-  } else {
-    if (el && el.requestFullscreen) el.requestFullscreen().catch(() => {});
-    else if (el && el.webkitRequestFullscreen) el.webkitRequestFullscreen();
-    else if (typeof videoEl.value.webkitEnterFullscreen === 'function') {
-      videoEl.value.webkitEnterFullscreen();
-    }
-  }
-}
-
-// ── Player Controls & Native Event Handlers ───────────────────────────────
-function handleUserTapToPlay() {
-  needsUserTapToPlay.value = false;
-  safePlay();
-}
-
-function togglePlay() {
-  if (!videoEl.value || !room.url) return;
-  needsUserTapToPlay.value = false;
-  if (videoEl.value.paused) {
-    safePlay();
-  } else {
-    safePause();
-  }
-}
-
-function skip(deltaSeconds) {
-  if (!videoEl.value || !room.url) return;
-  const newTime = Math.max(0, Math.min(duration.value || 999999, videoEl.value.currentTime + deltaSeconds));
-  videoEl.value.currentTime = newTime;
-  currentTime.value = newTime;
-  socket.send('player.sync', { paused: paused.value, time: newTime });
-}
-
-function toggleMute() {
-  if (isMuted.value) {
-    isMuted.value = false;
-    volume.value = prevVolume.value || 1;
-  } else {
-    prevVolume.value = volume.value;
-    isMuted.value = true;
-    volume.value = 0;
-  }
-  if (videoEl.value) {
-    videoEl.value.volume = isMuted.value ? 0 : volume.value;
-    videoEl.value.muted = isMuted.value;
-  }
-}
-
-function onSeekInput(e) {
-  currentTime.value = parseFloat(e.target.value);
-}
-
-function onSeekEnd(e) {
-  isUserScrubbing.value = false;
-  const targetTime = parseFloat(e.target.value);
-  if (videoEl.value) {
-    videoEl.value.currentTime = targetTime;
-  }
-  clearTimeout(seekDebounceTimer);
-  seekDebounceTimer = setTimeout(() => {
-    logDebug('User seeked to:', targetTime);
-    socket.send('player.sync', { paused: paused.value, time: targetTime });
-  }, 100);
-}
-
-function onPlay() {
-  paused.value = false;
-  needsUserTapToPlay.value = false;
-  if (!isApplyingRemoteSync && videoEl.value) {
-    logDebug('Native Play emitted -> broadcasting sync');
-    socket.send('player.sync', { paused: false, time: videoEl.value.currentTime });
-  }
-}
-
-function onPause() {
-  paused.value = true;
-  controlsHidden.value = false;
-  clearTimeout(hideTimer);
-  if (!isApplyingRemoteSync && videoEl.value) {
-    logDebug('Native Pause emitted -> broadcasting sync');
-    socket.send('player.sync', { paused: true, time: videoEl.value.currentTime });
-  }
-}
-
-function onSeeked() {
-  // Passive seeked event handler - do not broadcast to avoid ping-pong seek storms.
-  // Explicit user seeks are handled by onSeekEnd() and skip().
-}
-
-function onTimeUpdate() {
-  if (!isUserScrubbing.value && videoEl.value) {
-    currentTime.value = videoEl.value.currentTime;
-  }
-}
-
-function onDurationChange() {
-  if (videoEl.value) duration.value = videoEl.value.duration;
-}
-
-function getBufferAhead() {
-  if (!videoEl.value || !videoEl.value.buffered || videoEl.value.buffered.length === 0) return 0;
-  const current = videoEl.value.currentTime;
-  for (let i = 0; i < videoEl.value.buffered.length; i++) {
-    if (videoEl.value.buffered.start(i) <= current && current <= videoEl.value.buffered.end(i)) {
-      return Math.max(0, videoEl.value.buffered.end(i) - current);
-    }
-  }
-  return 0;
-}
-
-let waitingBufferTimer = null;
-let justUnpausedTimestamp = 0;
-let lastSentReady = null;
-
-function setClientReadiness(isReady) {
-  if (lastSentReady === isReady) return;
-  lastSentReady = isReady;
-  socket.send('player.readiness', { ready: isReady, time: videoEl.value?.currentTime || 0 });
-}
-
-function onWaiting() {
-  clearTimeout(waitingBufferTimer);
-  // Ignore transient waiting events right after unpausing (within 1.5s)
-  if (Date.now() - justUnpausedTimestamp < 1500) {
-    return;
-  }
-  const buf = getBufferAhead();
-  waitingBufferTimer = setTimeout(() => {
-    if (videoEl.value && videoEl.value.readyState < 3 && !paused.value) {
-      buffering.value = true;
-      logDebug(`Buffer stall detected (buffer ahead: ${buf.toFixed(1)}s) -> sending player.buffering`);
-      socket.send('player.buffering', { buffering: true });
-      socket.send('player.diag', {
-        bufferAhead: buf,
-        pbr: videoEl.value.playbackRate,
-        drift: 0,
-        reason: 'stall',
-      });
-    }
-  }, 1200);
-}
-
-function onSeeking() {
-  clearTimeout(waitingBufferTimer);
-  setClientReadiness(false);
-}
-
-function onCanPlay() {
-  clearTimeout(waitingBufferTimer);
-  buffering.value = false;
-  setClientReadiness(true);
-  socket.send('player.buffering', { buffering: false });
-  if (videoEl.value) {
-    videoEl.value.volume = isMuted.value ? 0 : volume.value;
-    videoEl.value.muted = isMuted.value;
-  }
-  if (pendingSync) {
-    const syncToApply = pendingSync;
-    pendingSync = null;
-    setTimeout(() => {
-      applySync(syncToApply);
-    }, 60);
-  }
-}
-
-function forcePlayNow() {
-  socket.send('room.force_play');
-}
-
-function onVideoError() {
-  doToast('Could not load stream — check the URL or addon source', 5000);
-  buffering.value = false;
-}
-
-// ── Smart Synchronization Engine ──────────────────────────────────────────
-async function applySync(data) {
-  if (!videoEl.value || !data) return;
-
-  // Discard older out-of-order or duplicate packets
-  if (data.seq && lastAppliedSeq && data.seq <= lastAppliedSeq) {
-    logDebug(`Discarding stale/duplicate sync #${data.seq} (current: #${lastAppliedSeq})`);
-    return;
-  }
-  if (data.seq) lastAppliedSeq = data.seq;
-
-  const target = Math.max(0, data.time || 0);
-
-  isApplyingRemoteSync = true;
-  clearTimeout(remoteSyncTimer);
-
-  const drift = (videoEl.value.currentTime - target);
-  logDebug(`ApplySync #${data.seq || 0}: ${data.paused ? 'PAUSE' : 'PLAY'} target=${fmtTime(target)} (${target.toFixed(1)}s, current: ${videoEl.value.currentTime.toFixed(1)}s, drift: ${drift.toFixed(2)}s)`);
-
-  if (data.paused) {
-    if (videoEl.value.playbackRate !== 1.0) videoEl.value.playbackRate = 1.0;
-    await safePause();
-    if (Math.abs(videoEl.value.currentTime - target) > 0.4) {
-      videoEl.value.currentTime = target;
-    }
-    paused.value = true;
-    needsUserTapToPlay.value = false;
-    if (isCasting.value) {
-      castService.sendPauseToCast();
-      castService.sendSeekToCast(target);
-    }
-  } else {
-    justUnpausedTimestamp = Date.now();
-    roomReadiness.value.waiting = false;
-    // Only seek on PLAY if we are far off (> 4s), otherwise start playing cleanly at current spot
-    if (Math.abs(videoEl.value.currentTime - target) > 4.0) {
-      videoEl.value.currentTime = target;
-    }
-    await safePlay();
-    paused.value = false;
-    if (isCasting.value) {
-      castService.sendPlayToCast();
-      castService.sendSeekToCast(target);
-    }
-  }
-
-  remoteSyncTimer = setTimeout(() => {
-    isApplyingRemoteSync = false;
-  }, 500);
-}
-
 // ── UI Helpers ────────────────────────────────────────────────────────────
 function showControls() {
   controlsHidden.value = false;
@@ -1033,7 +916,7 @@ function showControls() {
 
 function scheduleHideControls() {
   clearTimeout(hideTimer);
-  if (!paused.value && room.url) {
+  if (!paused.value && room.url && !room.activeCountdown) {
     hideTimer = setTimeout(() => {
       controlsHidden.value = true;
     }, 3500);
@@ -1121,7 +1004,8 @@ function onKeyDown(e) {
   if (e.code === 'KeyF') toggleFullscreen();
   if (e.code === 'KeyM') toggleMute();
   if (e.code === 'KeyC') showSubtitlesModal.value = !showSubtitlesModal.value;
-  if (e.code === 'KeyS') showSearchModal.value = true;
+  if (e.code === 'KeyS' && room.isHost) showSearchModal.value = true;
+  if (e.code === 'Escape' && room.activeCountdown) cancelCountdown();
 }
 
 // ── Watchers ──────────────────────────────────────────────────────────────
@@ -1144,7 +1028,6 @@ watch(volume, (v) => {
   }
 });
 
-// Record friends automatically when room users change
 watch(() => room.users, (users) => {
   if (users && users.length > 0) {
     profileStore.recordFriends(users, room.you?.id);
@@ -1162,30 +1045,6 @@ onMounted(async () => {
 
   document.addEventListener('keydown', onKeyDown);
 
-  // Setup AirPlay availability detection
-  if (videoEl.value) {
-    castService.setupAirPlay(videoEl.value, (available) => {
-      airplayAvailable.value = available;
-    });
-  }
-
-  // Setup Google Cast listeners
-  const offCastState = castService.on('stateChange', ({ casting }) => {
-    if (typeof casting === 'boolean') {
-      isCasting.value = casting;
-      doToast(casting ? 'Streaming to TV (Chromecast)' : 'Chromecast disconnected');
-    }
-  });
-
-  const offCastSync = castService.on('syncEvent', (evt) => {
-    if (evt.type === 'pause_change') {
-      paused.value = evt.paused;
-      socket.send('player.sync', { paused: evt.paused, time: evt.time || videoEl.value?.currentTime || 0 });
-    } else if (evt.type === 'time_change') {
-      currentTime.value = evt.time;
-    }
-  });
-
   if (savedName) socket.send('user.name', { name: savedName });
   socket.onReconnect = () => socket.send('room.join', { roomId });
   socket.send('room.join', { roomId });
@@ -1195,28 +1054,29 @@ onMounted(async () => {
   }
 
   const offs = [
-    offCastState,
-    offCastSync,
     socket.on('room.joined', (data) => {
       roomNotFound.value = false;
       room.$patch({
         roomId: data.roomId,
         isHost: data.isHost,
+        hostId: data.hostId,
         you: data.you,
         users: data.users,
         url: data.url,
         mediaMeta: data.mediaMeta || null,
         subtitles: data.subtitles || [],
         player: data.player,
+        activeCountdown: data.activeCountdown || null,
       });
+
+      if (data.activeCountdown) {
+        startCountdownTimer(data.activeCountdown);
+      }
 
       if (data.users?.length) {
         profileStore.recordFriends(data.users, data.you?.id);
       }
 
-      if (data.url && data.player) {
-        pendingSync = data.player;
-      }
       if (data.subtitles?.length && !room.currentSubtitle) {
         const defaultSub = data.subtitles.find(s => ['eng', 'en'].includes(s.lang?.toLowerCase())) || data.subtitles[0];
         room.currentSubtitle = defaultSub;
@@ -1230,10 +1090,22 @@ onMounted(async () => {
     }),
 
     socket.on('room.host', ({ hostId }) => {
+      room.hostId = hostId;
       room.isHost = room.you?.id === hostId;
     }),
 
+    socket.on('room.countdown', (data) => {
+      startCountdownTimer(data);
+    }),
+
+    socket.on('room.countdown_cancelled', () => {
+      if (countdownInterval) clearInterval(countdownInterval);
+      room.activeCountdown = null;
+    }),
+
     socket.on('player.url', (data) => {
+      if (countdownInterval) clearInterval(countdownInterval);
+      room.activeCountdown = null;
       room.url = data.url;
       room.mediaMeta = data.mediaMeta || null;
       room.subtitles = data.subtitles || [];
@@ -1242,15 +1114,8 @@ onMounted(async () => {
       currentTime.value = 0;
       duration.value = 0;
       showUrlBar.value = false;
-      pendingSync = null;
       lastAppliedSeq = 0;
 
-      // If casting, load new URL on Chromecast
-      if (isCasting.value && data.url) {
-        castService.loadMediaOnChromecast(data.url, data.mediaMeta, 0, false);
-      }
-
-      // Record to encrypted profile history
       if (data.url && data.mediaMeta) {
         profileStore.recordWatch({
           id: data.mediaMeta.id,
@@ -1264,7 +1129,6 @@ onMounted(async () => {
         });
       }
 
-      // Auto-load subtitle
       if (data.subtitles?.length) {
         const defaultSub = data.subtitles.find(s => ['eng', 'en'].includes(s.lang?.toLowerCase())) || data.subtitles[0];
         room.currentSubtitle = defaultSub;
@@ -1279,105 +1143,29 @@ onMounted(async () => {
     }),
 
     socket.on('player.sync', (data) => {
+      if (countdownInterval) clearInterval(countdownInterval);
+      room.activeCountdown = null;
       room.player = data;
       applySync(data);
-    }),
-
-    socket.on('room.readiness', (data) => {
-      roomReadiness.value = {
-        waiting: !data.allReady,
-        readyCount: data.readyCount,
-        totalCount: data.totalCount,
-        waitingFor: data.waitingFor || [],
-      };
     }),
 
     socket.on('room.message', (msg) => {
       room.addMessage(msg);
     }),
 
-    socket.on('room.tsMap', ({ tsMap, paused: isRoomPaused }) => {
+    socket.on('room.tsMap', ({ tsMap, hostId, paused: isRoomPaused }) => {
       roomTsMap.value = tsMap || {};
+      if (hostId) room.hostId = hostId;
 
-      if (!videoEl.value || paused.value || isRoomPaused || isApplyingRemoteSync || isUserScrubbing.value || !room.url) {
-        if (videoEl.value && videoEl.value.playbackRate !== 1.0) {
-          videoEl.value.playbackRate = 1.0;
-          socket.send('player.diag', {
-            bufferAhead: getBufferAhead(),
-            pbr: 1.0,
-            drift: 0,
-            reason: 'rate_reset',
-          });
-        }
-        return;
-      }
-
-      // Smooth Peer-to-Peer Sync Engine (Zero Clock Skew - Compares Real Video Playheads)
-      const myId = room.you?.id;
-      const current = videoEl.value.currentTime;
-      let peerLeadTime = null;
-
-      if (tsMap) {
-        for (const [uid, peerData] of Object.entries(tsMap)) {
-          if (uid !== myId && peerData && typeof peerData.time === 'number' && !peerData.buffering) {
-            if (peerLeadTime === null || peerData.time > peerLeadTime) {
-              peerLeadTime = peerData.time;
-            }
+      // Viewer passive drift alignment with host
+      if (!room.isHost && !paused.value && !isRoomPaused && videoEl.value && room.url && !room.activeCountdown) {
+        const hostPeer = tsMap?.[room.hostId];
+        if (hostPeer && typeof hostPeer.time === 'number' && !hostPeer.buffering) {
+          const drift = Math.abs((hostPeer.time || 0) - videoEl.value.currentTime);
+          if (drift > 2.5) {
+            logDebug(`Viewer drift alignment (${drift.toFixed(1)}s) -> syncing to host position`);
+            videoEl.value.currentTime = hostPeer.time;
           }
-        }
-      }
-
-      // If no active non-buffering peer, keep normal 1.0x playback
-      if (peerLeadTime === null) {
-        if (videoEl.value.playbackRate !== 1.0) {
-          videoEl.value.playbackRate = 1.0;
-        }
-        return;
-      }
-
-      // Delta: positive = we are lagging behind the peer lead
-      const delta = peerLeadTime - current;
-
-      // Deadband Zone: If drift is within ±0.45s, preserve smooth audio at pure 1.0x
-      if (Math.abs(delta) < 0.45) {
-        if (videoEl.value.playbackRate !== 1.0) {
-          videoEl.value.playbackRate = 1.0;
-          logDebug(`In sync (drift: ${delta.toFixed(2)}s) -> resetting playbackRate to 1.0x`);
-          socket.send('player.diag', {
-            bufferAhead: getBufferAhead(),
-            pbr: 1.0,
-            drift: delta,
-            reason: 'rate_reset',
-          });
-        }
-        return;
-      }
-
-      // Micro-catchup for moderate lag (0.45s to 2.5s): gentle 1.05x speedup
-      if (delta >= 0.45 && delta <= 2.5) {
-        const targetPbr = 1.05;
-        if (videoEl.value.playbackRate !== targetPbr) {
-          videoEl.value.playbackRate = targetPbr;
-          logDebug(`Catching up -> ${targetPbr}x (lag: ${delta.toFixed(2)}s, buffer ahead: ${getBufferAhead().toFixed(1)}s)`);
-          socket.send('player.diag', {
-            bufferAhead: getBufferAhead(),
-            pbr: targetPbr,
-            drift: delta,
-            reason: 'rate_change',
-          });
-        }
-      } else if (delta <= -0.45 && delta >= -2.0) {
-        // Micro-slowdown for lead (0.45s to 2.0s ahead): gentle 0.95x slowdown
-        const targetPbr = 0.95;
-        if (videoEl.value.playbackRate !== targetPbr) {
-          videoEl.value.playbackRate = targetPbr;
-          logDebug(`Slowing down -> ${targetPbr}x (ahead: ${(-delta).toFixed(2)}s, buffer ahead: ${getBufferAhead().toFixed(1)}s)`);
-          socket.send('player.diag', {
-            bufferAhead: getBufferAhead(),
-            pbr: targetPbr,
-            drift: delta,
-            reason: 'rate_change',
-          });
         }
       }
     }),
@@ -1397,7 +1185,6 @@ onMounted(async () => {
       socket.send('player.ts', {
         time: videoEl.value.currentTime,
         buffering: buffering.value,
-        ready: !buffering.value && videoEl.value.readyState >= 3,
       });
     }
   }, 1000);
@@ -1405,11 +1192,10 @@ onMounted(async () => {
   onUnmounted(() => {
     offs.forEach(off => off());
     document.removeEventListener('keydown', onKeyDown);
+    if (countdownInterval) clearInterval(countdownInterval);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     clearTimeout(hideTimer);
     clearTimeout(toastTimer);
-    clearTimeout(remoteSyncTimer);
-    clearTimeout(seekDebounceTimer);
     if (activeSubTrackBlobUrl.value) {
       URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     }
@@ -1606,13 +1392,21 @@ onMounted(async () => {
 .logo {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   text-decoration: none;
   font-size: 1.1rem;
   font-weight: 700;
   color: var(--text);
 }
-.logo-heart { color: var(--accent); font-size: 1.2rem; }
+.logo-badge {
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+}
 .logo-text {
   background: linear-gradient(120deg, #fff 40%, var(--accent) 100%);
   -webkit-background-clip: text;
@@ -1664,6 +1458,39 @@ onMounted(async () => {
 }
 .header-btn:hover { border-color: var(--accent); color: var(--accent); }
 
+/* Host Pill in Header */
+.host-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(245, 166, 35, 0.12);
+  border: 1px solid rgba(245, 166, 35, 0.4);
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--gold);
+}
+.host-pill.is-you {
+  background: rgba(224, 61, 90, 0.15);
+  border-color: rgba(224, 61, 90, 0.4);
+  color: var(--accent);
+}
+.host-pill-tag {
+  font-size: 0.65rem;
+  font-weight: 800;
+  background: rgba(255, 255, 255, 0.15);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.05em;
+}
+.host-pill-name {
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .users-pill {
   display: flex;
   align-items: center;
@@ -1674,7 +1501,10 @@ onMounted(async () => {
   border-radius: var(--radius-sm);
   font-size: 0.8rem;
   color: var(--muted);
+  cursor: pointer;
+  transition: border-color 0.15s;
 }
+.users-pill:hover { border-color: var(--border-light); }
 .user-count { font-weight: 700; color: var(--text); }
 .users-avatar-stack {
   display: flex;
@@ -1695,34 +1525,127 @@ onMounted(async () => {
   position: relative;
 }
 .user-dot:first-child { margin-left: 0; }
-
-.sync-dot-badge {
+.host-dot-badge {
   position: absolute;
-  bottom: -2px;
-  right: -2px;
-  width: 6px;
-  height: 6px;
+  top: -4px;
+  right: -4px;
+  font-size: 0.5rem;
+  font-weight: 800;
+  background: var(--gold);
+  color: #000;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
-  border: 1px solid var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
-.sync-dot-badge.sync-good {
-  background: #22c55e;
-  box-shadow: 0 0 4px #22c55e;
+
+/* Users Dropdown Menu */
+.users-dropdown-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
 }
-.sync-dot-badge.sync-catching-up {
-  background: #eab308;
-  animation: pulse-sync 1.2s infinite ease-in-out;
+.users-dropdown {
+  position: absolute;
+  top: 58px;
+  right: 180px;
+  width: 280px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+  z-index: 101;
+  animation: slide-down 0.15s ease both;
 }
-.sync-dot-badge.sync-buffering {
-  background: #ef4444;
-  animation: pulse-sync 0.8s infinite ease-in-out;
+.users-dropdown-header {
+  padding: 10px 14px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
-.sync-dot-badge.sync-self, .sync-dot-badge.sync-unknown {
-  display: none;
+.close-drop-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px;
 }
-@keyframes pulse-sync {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.4; transform: scale(1.3); }
+.users-dropdown-list {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+.user-dropdown-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  transition: background 0.1s;
+}
+.user-dropdown-item:hover { background: rgba(255, 255, 255, 0.04); }
+.user-item-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+}
+.user-avatar-sm {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+}
+.user-item-name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.you-tag {
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-weight: 400;
+  margin-left: 2px;
+}
+.host-tag {
+  font-size: 0.62rem;
+  font-weight: 800;
+  background: rgba(245, 166, 35, 0.2);
+  color: var(--gold);
+  border: 1px solid rgba(245, 166, 35, 0.4);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+.btn-make-host {
+  padding: 3px 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-make-host:hover {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
 }
 
 .user-chip-btn {
@@ -1744,28 +1667,41 @@ onMounted(async () => {
 
 .vault-mini-tag {
   font-size: 0.65rem;
-  color: #3dbe7a;
-  background: rgba(61, 190, 122, 0.12);
+  font-weight: 700;
+  color: var(--gold);
+  background: rgba(245, 166, 35, 0.15);
+  border: 1px solid rgba(245, 166, 35, 0.3);
   padding: 1px 5px;
-  border-radius: 999px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
 }
 
+.user-chip-name {
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Toggle chat icon button */
 .icon-btn {
-  width: 34px; height: 34px;
-  border-radius: var(--radius-sm);
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 34px; height: 34px;
   background: var(--surface2);
   border: 1px solid var(--border);
-  color: var(--text);
-  position: relative;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
   transition: all 0.15s;
 }
-.icon-btn:hover { border-color: var(--border-light); }
-.icon-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
-.icon-btn.sm { width: 28px; height: 28px; }
-
+.icon-btn:hover, .icon-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
 .badge {
   position: absolute;
   top: -4px; right: -4px;
@@ -1781,55 +1717,53 @@ onMounted(async () => {
   padding: 0 4px;
 }
 
-/* ── Main Layout ────────────────────────────────────────────────────────── */
+/* ── Main Area ───────────────────────────────────────────────────────────── */
 .main {
-  display: flex;
   flex: 1;
+  display: flex;
   overflow: hidden;
   position: relative;
 }
 
-/* ── Player Wrap ────────────────────────────────────────────────────────── */
+/* ── Player ─────────────────────────────────────────────────────────────── */
 .player-wrap {
   flex: 1;
-  background: #000;
   position: relative;
+  background: #000;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  user-select: none;
 }
-
-video {
+.player-wrap video {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: #000;
+  display: block;
 }
 
 /* Placeholder */
 .placeholder {
-  position: absolute;
-  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at center, #181824 0%, #0c0c14 100%);
+  width: 100%; height: 100%;
   padding: 24px;
+  text-align: center;
 }
 .placeholder-inner {
-  max-width: 440px;
-  text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
+  max-width: 440px;
 }
 .ph-icon-wrap {
-  width: 80px; height: 80px;
-  border-radius: 50%;
+  width: 72px; height: 72px;
   background: var(--accent-dim);
   border: 1px solid rgba(224, 61, 90, 0.3);
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1876,124 +1810,80 @@ video {
   animation: spin 0.8s linear infinite;
 }
 
-/* All-Peers Readiness Overlay */
-.readiness-overlay {
-  position: absolute;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 30;
-  animation: slide-down 0.25s ease both;
-  pointer-events: auto;
-  max-width: 90%;
-}
-.readiness-card {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: rgba(18, 18, 26, 0.95);
-  border: 1px solid rgba(224, 61, 90, 0.4);
-  border-radius: 999px;
-  padding: 8px 18px;
-  backdrop-filter: blur(16px);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
-}
-.readiness-spinner {
-  width: 18px; height: 18px;
-  border: 2px solid rgba(224, 61, 90, 0.3);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  flex-shrink: 0;
-}
-.readiness-info {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-.readiness-title {
-  font-size: 0.82rem;
-  font-weight: 700;
-  color: var(--text);
-  letter-spacing: 0.02em;
-}
-.readiness-sub {
-  font-size: 0.72rem;
-  color: var(--muted);
-}
-.readiness-sub strong {
-  color: var(--gold);
-}
-.btn-force-play {
-  padding: 5px 12px;
-  background: var(--accent);
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  color: #fff;
-  transition: filter 0.15s;
-  margin-left: 6px;
-  flex-shrink: 0;
-}
-.btn-force-play:hover { filter: brightness(1.2); }
-
-.tap-play-overlay {
+/* ── 3-Second Synchronized Action Countdown Overlay ──────────────────────── */
+.countdown-overlay {
   position: absolute;
   inset: 0;
   background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(4px);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 25;
-  cursor: pointer;
+  z-index: 40;
   animation: fade-in 0.2s ease both;
 }
-.tap-play-btn {
+.countdown-card {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 1.05rem;
-  font-weight: 700;
-  padding: 16px 28px;
-  border-radius: 999px;
-  box-shadow: 0 8px 32px rgba(224, 61, 90, 0.5);
-  transition: transform 0.15s;
+  gap: 16px;
+  background: rgba(18, 18, 26, 0.95);
+  border: 1px solid rgba(224, 61, 90, 0.4);
+  border-radius: var(--radius-lg);
+  padding: 28px 36px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.8);
+  text-align: center;
+  max-width: min(380px, 90%);
 }
-.tap-play-btn:hover { transform: scale(1.05); }
-
-/* Tap-to-Unmute Banner for Mobile Autoplay Fallback */
-.unmute-banner {
-  position: absolute;
-  bottom: 80px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: rgba(22, 22, 32, 0.95);
-  border: 1px solid rgba(245, 166, 35, 0.5);
-  color: var(--gold);
-  padding: 9px 18px;
-  border-radius: 999px;
+.countdown-circle {
+  width: 76px; height: 76px;
+  border-radius: 50%;
+  background: rgba(224, 61, 90, 0.15);
+  border: 3px solid var(--accent);
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  box-shadow: 0 0 24px rgba(224, 61, 90, 0.4);
+  animation: pulse-countdown 1s infinite ease-in-out;
+}
+.countdown-num {
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: #fff;
+}
+@keyframes pulse-countdown {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(224, 61, 90, 0.3); }
+  50% { transform: scale(1.06); box-shadow: 0 0 32px rgba(224, 61, 90, 0.6); }
+}
+.countdown-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.countdown-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+.countdown-sub {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.btn-cancel-countdown {
+  padding: 8px 20px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
   font-size: 0.82rem;
   font-weight: 600;
   cursor: pointer;
-  z-index: 35;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(12px);
-  animation: slide-up 0.3s ease both;
-  transition: transform 0.15s, background 0.15s;
+  transition: all 0.15s;
 }
-.unmute-banner:hover {
-  transform: translateX(-50%) scale(1.03);
-  background: rgba(30, 30, 44, 0.98);
-}
-.unmute-banner strong {
-  color: #fff;
-  text-decoration: underline;
+.btn-cancel-countdown:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* Media Title Top Overlay */
@@ -2007,41 +1897,40 @@ video {
   display: flex;
   align-items: center;
   gap: 8px;
-  backdrop-filter: blur(8px);
-  z-index: 5;
-  font-size: 0.85rem;
-  color: var(--text);
+  backdrop-filter: blur(12px);
+  z-index: 20;
+  pointer-events: none;
 }
-.m-title { font-weight: 700; }
-.m-ep { color: var(--gold); }
-.m-year { color: var(--muted); }
+.m-title { font-size: 0.92rem; font-weight: 700; color: #fff; }
+.m-ep { font-size: 0.82rem; color: var(--gold); }
+.m-year { font-size: 0.78rem; color: var(--muted); }
 
-/* Direct URL bar */
+/* Direct URL Bar Overlay */
 .url-bar-wrap {
   position: absolute;
   top: 16px;
   left: 50%;
   transform: translateX(-50%);
-  width: min(600px, 92%);
-  z-index: 20;
-  animation: slide-down 0.2s ease both;
+  width: min(600px, 90%);
+  z-index: 25;
 }
 .url-bar {
   display: flex;
   gap: 8px;
   background: rgba(18, 18, 26, 0.95);
-  border: 1px solid var(--border-light);
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  padding: 8px 12px;
-  backdrop-filter: blur(12px);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  padding: 8px;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
 }
 .url-bar input {
   flex: 1;
   background: transparent;
   border: none;
+  padding: 6px 10px;
+  font-size: 0.85rem;
   color: var(--text);
-  font-size: 0.9rem;
 }
 .url-bar input:focus { outline: none; }
 .btn-load-url {
@@ -2051,83 +1940,73 @@ video {
   font-size: 0.82rem;
   font-weight: 600;
   color: #fff;
-  white-space: nowrap;
+  flex-shrink: 0;
+  transition: filter 0.15s;
 }
 .btn-load-url:hover:not(:disabled) { filter: brightness(1.15); }
 .btn-close-url {
-  width: 28px; height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  background: none;
+  border: none;
   color: var(--muted);
+  padding: 6px;
+  cursor: pointer;
 }
 .btn-close-url:hover { color: var(--text); }
 
-/* ── Player Controls Overlay ────────────────────────────────────────────── */
+/* ── Player Controls ─────────────────────────────────────────────────────── */
 .controls {
   position: absolute;
   bottom: 0; left: 0; right: 0;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.85) 0%, rgba(0, 0, 0, 0.3) 60%, transparent 100%);
-  padding: 32px 16px 12px;
-  z-index: 10;
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%);
+  padding: 40px 16px 12px;
+  z-index: 20;
+  transition: opacity 0.25s ease, transform 0.25s ease;
 }
-.controls-hidden .controls,
-.controls-hidden .media-title-overlay {
+.controls-hidden .controls {
   opacity: 0;
+  transform: translateY(8px);
   pointer-events: none;
 }
 
 .controls-inner {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 /* Scrub Bar */
 .scrub-bar-wrap {
   position: relative;
-  width: 100%;
-  height: 6px;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  cursor: pointer;
   display: flex;
   align-items: center;
-  cursor: pointer;
 }
-.scrub-bar-wrap:hover .scrub-bar { height: 8px; }
-.scrub-bar {
-  width: 100%;
-  height: 4px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 999px;
-  outline: none;
-  cursor: pointer;
-  position: relative;
-  z-index: 2;
-  transition: height 0.15s;
+.scrub-bar-wrap.readonly-scrub {
+  cursor: default;
 }
-.scrub-bar::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 14px; height: 14px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 8px rgba(224, 61, 90, 0.8);
-  cursor: pointer;
-  transition: transform 0.15s;
-}
-.scrub-bar:hover::-webkit-slider-thumb { transform: scale(1.25); }
 .scrub-progress {
   position: absolute;
-  top: 50%; left: 0;
-  transform: translateY(-50%);
-  height: 4px;
+  left: 0; top: 0; bottom: 0;
   background: var(--accent);
-  border-radius: 999px;
+  border-radius: 4px;
   pointer-events: none;
-  z-index: 1;
+}
+.scrub-bar {
+  position: absolute;
+  inset: 0;
+  width: 100%; height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  margin: 0;
+}
+.readonly-scrub .scrub-bar {
+  pointer-events: none;
 }
 
+/* Controls Buttons Row */
 .controls-row {
   display: flex;
   align-items: center;
@@ -2140,29 +2019,38 @@ video {
 }
 
 .ctrl-btn {
-  width: 36px; height: 36px;
-  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  width: 36px; height: 36px;
   background: transparent;
-  transition: background 0.15s, color 0.15s;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  cursor: pointer;
+  transition: all 0.15s;
   position: relative;
 }
-.ctrl-btn:hover { background: rgba(255, 255, 255, 0.15); }
-.ctrl-btn.active { color: var(--accent); }
-
+.ctrl-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+.ctrl-btn.active {
+  color: var(--accent);
+}
 .sub-label {
-  font-size: 0.65rem;
-  font-weight: 700;
-  margin-left: 2px;
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  font-size: 0.55rem;
+  font-weight: 800;
   background: var(--accent);
   color: #fff;
-  padding: 1px 4px;
-  border-radius: 3px;
+  padding: 1px 3px;
+  border-radius: 2px;
+  line-height: 1;
 }
 
+/* Volume Slider */
 .vol-wrap {
   display: flex;
   align-items: center;
@@ -2170,74 +2058,59 @@ video {
 }
 .vol-slider {
   width: 70px;
-  height: 4px;
-  -webkit-appearance: none;
-  appearance: none;
-  background: rgba(255, 255, 255, 0.25);
-  border-radius: 999px;
-  outline: none;
-  cursor: pointer;
-}
-.vol-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 12px; height: 12px;
-  border-radius: 50%;
-  background: #fff;
+  accent-color: var(--accent);
   cursor: pointer;
 }
 
+/* Time Display */
 .time-display {
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.85);
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  color: rgba(255, 255, 255, 0.8);
+  font-variant-numeric: tabular-nums;
   margin-left: 6px;
 }
-.time-sep { color: rgba(255, 255, 255, 0.4); }
+.time-sep { margin: 0 4px; color: rgba(255, 255, 255, 0.4); }
 
-/* ── Chat Sidebar ───────────────────────────────────────────────────────── */
+/* ── Chat Sidebar ────────────────────────────────────────────────────────── */
 .chat-sidebar {
-  width: 320px;
+  width: 300px;
   background: var(--surface);
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  transition: width 0.25s ease, transform 0.25s ease;
+  transition: margin-right 0.2s ease;
 }
 .chat-sidebar:not(.open) {
-  width: 0;
-  border-left-width: 0;
-  overflow: hidden;
+  display: none;
 }
-
 .chat-header {
-  height: 46px;
+  height: 48px;
+  padding: 0 14px;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 14px;
-  flex-shrink: 0;
 }
 .chat-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 0.85rem;
-  font-weight: 600;
+  font-size: 0.88rem;
+  font-weight: 700;
   color: var(--text);
 }
-
+.icon-btn.sm {
+  width: 26px; height: 26px;
+}
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 .chat-empty {
   display: flex;
@@ -2247,84 +2120,118 @@ video {
   height: 100%;
   color: var(--muted);
   text-align: center;
-  font-size: 0.82rem;
   gap: 8px;
+  font-size: 0.82rem;
 }
-
 .chat-msg {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
+.system-msg {
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: var(--surface2);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-left: 2px solid var(--accent);
+}
+.sys-time { color: var(--border-light); }
 .msg-header {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.msg-author { font-size: 0.78rem; font-weight: 700; }
-.msg-time { font-size: 0.68rem; color: var(--muted); }
-.msg-content {
+.msg-author {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.chat-host-tag {
+  font-size: 0.58rem;
+  font-weight: 800;
+  background: rgba(245, 166, 35, 0.2);
+  color: var(--gold);
+  border: 1px solid rgba(245, 166, 35, 0.4);
+  padding: 1px 3px;
+  border-radius: 2px;
+  margin-left: 4px;
+}
+.msg-time {
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.msg-body {
   font-size: 0.85rem;
   color: var(--text);
   line-height: 1.4;
   word-break: break-word;
 }
-
-.system-msg {
-  font-size: 0.75rem;
-  color: var(--muted);
-  font-style: italic;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.sys-time { color: rgba(255, 255, 255, 0.35); font-size: 0.68rem; font-style: normal; }
-
-.chat-footer {
-  padding: 10px 12px;
+.chat-input-row {
+  padding: 10px;
   border-top: 1px solid var(--border);
   display: flex;
-  gap: 6px;
-  background: var(--surface2);
+  gap: 8px;
 }
-.chat-footer input {
+.chat-input-row input {
   flex: 1;
-  background: var(--surface);
+  background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  padding: 8px 12px;
   font-size: 0.85rem;
   color: var(--text);
 }
-.chat-footer input:focus { border-color: var(--accent); }
+.chat-input-row input:focus { border-color: var(--accent); }
 .btn-send {
-  width: 34px; height: 34px;
-  border-radius: var(--radius-sm);
-  background: var(--accent);
-  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 36px; height: 36px;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: #fff;
+  cursor: pointer;
+  transition: filter 0.15s;
 }
 .btn-send:hover:not(:disabled) { filter: brightness(1.15); }
+.btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
 
-/* ── Toast ──────────────────────────────────────────────────────────────── */
+/* ── Toast ───────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed;
   bottom: 24px;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(18, 18, 26, 0.95);
+  background: rgba(20, 20, 30, 0.95);
   border: 1px solid var(--border-light);
-  color: var(--text);
-  padding: 10px 20px;
-  border-radius: var(--radius-md);
-  font-size: 0.88rem;
-  font-weight: 500;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.7);
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(12px);
   z-index: 2000;
-  backdrop-filter: blur(8px);
+  animation: slide-up 0.2s ease both;
 }
-.toast-enter-active, .toast-leave-active { transition: all 0.25s ease; }
-.toast-enter-from, .toast-leave-to { opacity: 0; transform: translate(-50%, 10px); }
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slide-down {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 </style>

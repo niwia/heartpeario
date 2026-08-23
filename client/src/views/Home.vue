@@ -9,15 +9,15 @@
       <button class="profile-top-chip" @click="showProfileModal = true" title="Manage Profiles & Encrypted History">
         <span class="p-dot" :style="{ background: profileStore.current.avatarColor }"></span>
         <span class="p-name">{{ profileStore.current.name }}</span>
-        <span class="p-vault-tag">🔒 Vault</span>
+        <span class="p-vault-tag">Vault</span>
       </button>
 
       <!-- Logo -->
       <div class="logo" aria-label="HeartPeario">
-        <span class="heart" aria-hidden="true">♥</span>
+        <span class="heart" aria-hidden="true">HP</span>
         <span class="wordmark">HeartPeario</span>
       </div>
-      <p class="tagline">Watch videos together — in sync, instantly.</p>
+      <p class="tagline">Watch videos together in sync, instantly.</p>
 
       <!-- Card -->
       <div class="card">
@@ -42,7 +42,7 @@
           :disabled="creating"
           @click="createRoom"
         >
-          <span v-if="!creating">♥ &nbsp;Create a Room</span>
+          <span v-if="!creating">Create a Room</span>
           <span v-else class="spinner"></span>
         </button>
 

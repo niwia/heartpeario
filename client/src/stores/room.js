@@ -4,6 +4,7 @@ export const useRoomStore = defineStore('room', {
   state: () => ({
     roomId: null,
     isHost: false,
+    hostId: null,
     you: null,
     users: [],
     url: null,
@@ -12,6 +13,7 @@ export const useRoomStore = defineStore('room', {
     currentSubtitle: null, // selected subtitle track
     subtitleOffsetMs: 0,
     player: { paused: true, time: 0, serverTime: Date.now() },
+    activeCountdown: null, // { action, targetTime, executeAt, durationSec, initiatedBy, initiatedByName }
     messages: [],
   }),
   actions: {
@@ -19,6 +21,7 @@ export const useRoomStore = defineStore('room', {
       this.$patch({
         roomId: null,
         isHost: false,
+        hostId: null,
         you: null,
         users: [],
         url: null,
@@ -27,6 +30,7 @@ export const useRoomStore = defineStore('room', {
         currentSubtitle: null,
         subtitleOffsetMs: 0,
         player: { paused: true, time: 0, serverTime: Date.now() },
+        activeCountdown: null,
         messages: [],
       });
     },

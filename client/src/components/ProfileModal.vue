@@ -12,7 +12,7 @@
             <div class="profile-title-row">
               <h2>{{ profileStore.current.name }}</h2>
               <span class="vault-badge" title="Encrypted at rest with AES-GCM 256-bit">
-                🔒 Encrypted Vault
+                Encrypted Vault
               </span>
             </div>
             <p class="profile-sub">Personal watch party profile & encrypted data</p>

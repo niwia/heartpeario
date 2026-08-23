@@ -59,10 +59,10 @@ const wss = new WebSocket.Server({ server });
 
 const rooms = new Map();
 
-// ── Persistent Test Room 'TEST' ───────────────────────────────────────────
+// Persistent Test Room 'TEST'
 const testRoom = {
   id: 'TEST',
-  hostId: 'SYSTEM',
+  hostId: null,
   url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
   mediaMeta: {
     title: 'Big Buck Bunny (Test Stream)',
@@ -71,15 +71,14 @@ const testRoom = {
     poster: 'https://upload.wikimedia.org/wikipedia/commons/c/c5/Big_buck_bunny_poster_big.jpg',
   },
   subtitles: [],
-  player: { paused: false, time: 0, serverTime: Date.now() },
+  player: { paused: true, time: 0, serverTime: Date.now() },
   clients: new Map(),
+  tsMap: new Map(),
+  seq: 0,
+  countdownTimer: null,
+  activeCountdown: null,
 };
 rooms.set('TEST', testRoom);
-
-/**
- * @typedef {{ id: string, name: string, color: string }} UserMeta
- * @typedef {{ id: string, hostId: string, url: string|null, mediaMeta: any, subtitles: Array, player: {paused:boolean,time:number,serverTime:number}, clients: Map<WebSocket, UserMeta> }} Room
- */
 
 const COLORS = ['#e03d5a', '#5a7de0', '#3dbe7a', '#e0a83d', '#a03de0', '#e05a3d', '#3dbde0'];
 const CLEAN_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -98,7 +97,7 @@ function normalizeCode(code) {
 }
 
 function send(ws, type, payload) {
-  if (ws.readyState === WebSocket.OPEN) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type, payload }));
   }
 }
@@ -114,7 +113,12 @@ function broadcastAll(room, type, payload) {
 }
 
 function roomUsers(room) {
-  return Array.from(room.clients.values()).map(u => ({ id: u.id, name: u.name, color: u.color }));
+  return Array.from(room.clients.values()).map(u => ({
+    id: u.id,
+    name: u.name,
+    color: u.color,
+    isHost: u.id === room.hostId,
+  }));
 }
 
 function formatTime(s) {
@@ -144,12 +148,100 @@ function broadcastSystemMessage(room, text) {
   });
 }
 
+function startCountdown(room, action, targetTime, user) {
+  if (!room) return;
+  if (room.countdownTimer) {
+    clearTimeout(room.countdownTimer);
+    room.countdownTimer = null;
+  }
+
+  const now = Date.now();
+  const time = Math.max(0, typeof targetTime === 'number' ? targetTime : (room.player?.time || 0));
+  const executeAt = now + 3000;
+
+  room.activeCountdown = {
+    action, // 'PLAY' | 'PAUSE' | 'SEEK'
+    targetTime: time,
+    executeAt,
+    durationSec: 3,
+    initiatedBy: user.id,
+    initiatedByName: user.name,
+  };
+
+  logServer(`[Room ${room.id}] [Countdown] ${action} at ${formatTime(time)} in 3s (initiated by ${user.name})`);
+
+  broadcastAll(room, 'room.countdown', room.activeCountdown);
+
+  const actionText = action === 'PLAY' ? 'resume playback' : (action === 'PAUSE' ? 'pause' : `seek to ${formatTime(time)}`);
+  broadcastSystemMessage(room, `${user.name} initiated 3s countdown to ${actionText}`);
+
+  room.countdownTimer = setTimeout(() => {
+    executeCountdown(room);
+  }, 3000);
+}
+
+function executeCountdown(room) {
+  if (!room || !room.activeCountdown) return;
+  const { action, targetTime, initiatedByName, initiatedBy } = room.activeCountdown;
+  room.activeCountdown = null;
+  room.countdownTimer = null;
+
+  room.seq = (room.seq || 0) + 1;
+  const now = Date.now();
+
+  if (action === 'PLAY') {
+    room.player = {
+      paused: false,
+      time: targetTime,
+      serverTime: now,
+      seq: room.seq,
+      authorId: initiatedBy,
+      authorName: initiatedByName,
+    };
+    logServer(`[Room ${room.id}] [Countdown Executed] PLAY at ${formatTime(targetTime)}`);
+  } else if (action === 'PAUSE') {
+    room.player = {
+      paused: true,
+      time: targetTime,
+      serverTime: now,
+      seq: room.seq,
+      authorId: initiatedBy,
+      authorName: initiatedByName,
+    };
+    logServer(`[Room ${room.id}] [Countdown Executed] PAUSE at ${formatTime(targetTime)}`);
+  } else if (action === 'SEEK') {
+    room.player = {
+      paused: room.player?.paused ?? true,
+      time: targetTime,
+      serverTime: now,
+      seq: room.seq,
+      authorId: initiatedBy,
+      authorName: initiatedByName,
+    };
+    logServer(`[Room ${room.id}] [Countdown Executed] SEEK to ${formatTime(targetTime)}`);
+  }
+
+  broadcastAll(room, 'player.sync', room.player);
+}
+
+function cancelCountdown(room, user) {
+  if (!room || !room.activeCountdown) return;
+  if (room.countdownTimer) {
+    clearTimeout(room.countdownTimer);
+    room.countdownTimer = null;
+  }
+  room.activeCountdown = null;
+  logServer(`[Room ${room.id}] [Countdown Cancelled] by ${user.name}`);
+  broadcastAll(room, 'room.countdown_cancelled', { cancelledBy: user.name });
+  broadcastSystemMessage(room, `Countdown cancelled by ${user.name}`);
+}
+
 wss.on('connection', (ws, req) => {
   const ip = req.socket.remoteAddress;
   const userId = genRoomCode(10);
   const color = COLORS[Math.floor(Math.random() * COLORS.length)];
   let user = { id: userId, name: `User${genRoomCode(4)}`, color };
-  /** @type {Room|null} */
+  /** @type {any} */
   let room = null;
 
   logServer(`Client connected from ${ip} (Assigned ID: ${userId})`);
@@ -160,7 +252,7 @@ wss.on('connection', (ws, req) => {
     const { type, payload = {} } = msg;
 
     switch (type) {
-      // ── Room creation ───────────────────────────────────────────────────
+      // Room creation
       case 'room.create': {
         const id = 'TEST';
         if (!rooms.has(id)) {
@@ -173,32 +265,40 @@ wss.on('connection', (ws, req) => {
             player: { paused: true, time: 0, serverTime: Date.now() },
             clients: new Map([[ws, user]]),
             tsMap: new Map([[userId, { time: 0, buffering: false, ready: true, updatedAt: Date.now() }]]),
+            seq: 0,
+            countdownTimer: null,
+            activeCountdown: null,
           };
           rooms.set(id, room);
         } else {
           room = rooms.get(id);
+          if (!room.hostId || room.clients.size === 0) {
+            room.hostId = userId;
+          }
           room.clients.set(ws, user);
           if (!room.tsMap) room.tsMap = new Map();
-          room.tsMap.set(userId, { time: 0, buffering: false, ready: true, updatedAt: Date.now() });
+          room.tsMap.set(userId, { time: room.player?.time || 0, buffering: false, ready: true, updatedAt: Date.now() });
         }
-        logServer(`[Room ${id}] Created/Joined by ${user.name} (${userId})`);
+        logServer(`[Room ${id}] Created/Joined by ${user.name} (${userId}) - Host: ${room.hostId === userId}`);
 
         send(ws, 'room.joined', {
           roomId: id,
-          isHost: room.hostId === userId || room.hostId === 'SYSTEM',
+          isHost: room.hostId === userId,
+          hostId: room.hostId,
           you: user,
           users: roomUsers(room),
           url: room.url,
           mediaMeta: room.mediaMeta,
           subtitles: room.subtitles,
           player: { ...room.player, serverTime: Date.now() },
+          activeCountdown: room.activeCountdown,
         });
         broadcast(room, 'room.users', { users: roomUsers(room) }, ws);
         broadcastSystemMessage(room, `${user.name} entered the room`);
         break;
       }
 
-      // ── Room joining ─────────────────────────────────────────────────────
+      // Room joining
       case 'room.join': {
         const rawCode = payload.roomId || '';
         let id = normalizeCode(rawCode);
@@ -220,21 +320,26 @@ wss.on('connection', (ws, req) => {
         }
 
         room = target;
+        if (!room.hostId || room.clients.size === 0) {
+          room.hostId = userId;
+        }
         room.clients.set(ws, user);
         if (!room.tsMap) room.tsMap = new Map();
         room.tsMap.set(userId, { time: room.player?.time || 0, buffering: false, ready: true, updatedAt: Date.now() });
-        const isHost = room.hostId === userId || room.hostId === 'SYSTEM';
-        logServer(`[Room ${id}] ${user.name} joined. Total users: ${room.clients.size}`);
+        const isHost = room.hostId === userId;
+        logServer(`[Room ${id}] ${user.name} joined. Total users: ${room.clients.size} (Host: ${room.hostId})`);
 
         send(ws, 'room.joined', {
           roomId: id,
           isHost,
+          hostId: room.hostId,
           you: user,
           users: roomUsers(room),
           url: room.url,
           mediaMeta: room.mediaMeta || null,
           subtitles: room.subtitles || [],
           player: { ...room.player, serverTime: Date.now() },
+          activeCountdown: room.activeCountdown,
         });
 
         broadcast(room, 'room.users', { users: roomUsers(room) }, ws);
@@ -242,7 +347,7 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
-      // ── User settings ────────────────────────────────────────────────────
+      // User renaming
       case 'user.name': {
         const name = (payload.name || '').trim().slice(0, 30);
         if (!name) break;
@@ -259,9 +364,39 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
-      // ── Video URL & Metadata ─────────────────────────────────────────────
+      // Transfer Host
+      case 'room.set_host': {
+        if (!room) break;
+        const { newHostId } = payload;
+        if (room.hostId !== userId && room.hostId !== null) {
+          send(ws, 'error', { message: 'Only current host can transfer host permissions' });
+          break;
+        }
+        const targetUser = Array.from(room.clients.values()).find(u => u.id === newHostId);
+        if (!targetUser) break;
+        room.hostId = newHostId;
+        logServer(`[Room ${room.id}] Host transferred to ${targetUser.name} (${newHostId})`);
+        broadcastAll(room, 'room.host', { hostId: room.hostId });
+        broadcastAll(room, 'room.users', { users: roomUsers(room) });
+        broadcastSystemMessage(room, `${targetUser.name} is now the room host`);
+        break;
+      }
+
+      // Video URL & Metadata
       case 'player.url': {
         if (!room) break;
+        const isHost = room.hostId === userId || room.clients.size === 1;
+        if (!isHost) {
+          send(ws, 'error', { message: 'Only the host can change the video stream' });
+          break;
+        }
+        if (room.countdownTimer) {
+          clearTimeout(room.countdownTimer);
+          room.countdownTimer = null;
+          room.activeCountdown = null;
+          broadcastAll(room, 'room.countdown_cancelled', { cancelledBy: user.name });
+        }
+
         const url = (payload.url || '').trim();
         room.url = url || null;
         room.mediaMeta = payload.mediaMeta || null;
@@ -278,153 +413,62 @@ wss.on('connection', (ws, req) => {
 
         const title = room.mediaMeta?.title ? `${room.mediaMeta.title} ${room.mediaMeta.episodeTitle || ''}` : 'direct video URL';
         broadcastSystemMessage(room, `${user.name} loaded: ${title}`);
-
-        // Reset buffer readiness for all room clients
-        room.readiness = new Map();
-        room.waitingToPlay = room.clients.size > 1;
-        room.pendingPlayTime = 0;
-        broadcastAll(room, 'room.readiness', {
-          readyCount: 0,
-          totalCount: room.clients.size,
-          waitingFor: Array.from(room.clients.values()).map(u => u.name),
-          allReady: room.clients.size <= 1,
-        });
         break;
       }
 
-      // ── Client Buffer & Readiness Reporting ──────────────────────────────
-      case 'player.readiness': {
+      // Host Playback Action with 3s Countdown (PLAY, PAUSE, SEEK)
+      case 'player.countdown_action': {
         if (!room) break;
-        const { ready, time } = payload;
-        if (!room.readiness) room.readiness = new Map();
-
-        // Deduplicate: ignore if client readiness state did not change
-        const prevEntry = room.readiness.get(userId);
-        if (prevEntry && prevEntry.ready === !!ready) {
+        const isHost = room.hostId === userId || room.clients.size === 1;
+        if (!isHost) {
+          // If non-host sent this, convert to pause request if it was pause
+          if (payload.action === 'PAUSE') {
+            startCountdown(room, 'PAUSE', payload.time, user);
+          } else {
+            send(ws, 'error', { message: 'Only host can control playback' });
+          }
           break;
         }
-
-        room.readiness.set(userId, { ready: !!ready, name: user.name, time: parseFloat(time) || 0 });
-
-        const totalUsers = room.clients.size;
-        const readyCount = Array.from(room.readiness.values()).filter(r => r.ready).length;
-        const waitingFor = Array.from(room.clients.values())
-          .filter(u => !room.readiness.get(u.id)?.ready)
-          .map(u => u.name);
-
-        logServer(`[Room ${room.id}] Buffer readiness: ${readyCount}/${totalUsers} ready. (Waiting for: ${waitingFor.join(', ') || 'none'})`);
-
-        broadcastAll(room, 'room.readiness', {
-          readyCount,
-          totalCount: totalUsers,
-          waitingFor,
-          allReady: readyCount >= totalUsers,
-        });
-
-        // If everyone is ready and room is waiting to unpause
-        if (readyCount >= totalUsers && room.waitingToPlay) {
-          clearTimeout(room.readinessSafetyTimer);
-          room.waitingToPlay = false;
-          room.seq = (room.seq || 0) + 1;
-          const startTime = room.pendingPlayTime !== undefined ? room.pendingPlayTime : (room.player?.time || 0);
-          room.player = {
-            paused: false,
-            time: startTime,
-            serverTime: Date.now(),
-            seq: room.seq,
-            authorId: 'SYSTEM',
-            authorName: 'System',
-          };
-          logServer(`[Room ${room.id}] 🍿 All ${totalUsers} viewers READY -> starting simultaneous playback at ${formatTime(startTime)}`);
-          broadcastAll(room, 'player.sync', room.player);
-          broadcastSystemMessage(room, `All viewers ready! Playing in sync 🍿`);
-        }
+        const action = payload.action || (room.player?.paused ? 'PLAY' : 'PAUSE');
+        const targetTime = typeof payload.time === 'number' ? payload.time : (room.player?.time || 0);
+        startCountdown(room, action, targetTime, user);
         break;
       }
 
-      // ── Client Buffering Pauses ──────────────────────────────────────────
-      case 'player.buffering': {
+      // Viewer Requests Pause (triggers 3s countdown for all)
+      case 'player.request_pause': {
         if (!room) break;
-        const { buffering } = payload;
-        if (buffering) {
-          logServer(`[Room ${room.id}] Client buffering mid-stream: ${user.name}`);
-          if (!room.player.paused && room.clients.size > 1) {
-            room.waitingToPlay = true;
-            room.pendingPlayTime = (room.player.time || 0) + Math.max(0, (Date.now() - (room.player.serverTime || Date.now())) / 1000);
-            room.seq = (room.seq || 0) + 1;
-            room.player = {
-              paused: true,
-              time: room.pendingPlayTime,
-              serverTime: Date.now(),
-              seq: room.seq,
-              authorId: userId,
-              authorName: user.name,
-            };
-            broadcastAll(room, 'player.sync', room.player);
-            broadcastSystemMessage(room, `Buffering for ${user.name}... paused`);
-          }
-          if (room.readiness) {
-            const entry = room.readiness.get(userId);
-            if (entry) entry.ready = false;
-          }
-          broadcastAll(room, 'room.readiness', {
-            readyCount: Array.from(room.readiness?.values() || []).filter(r => r.ready).length,
-            totalCount: room.clients.size,
-            waitingFor: [user.name],
-            allReady: false,
-          });
-        }
+        const time = typeof payload.time === 'number' ? payload.time : (room.player?.time || 0);
+        startCountdown(room, 'PAUSE', time, user);
         break;
       }
 
-      // ── Host Force Play Override ─────────────────────────────────────────
-      case 'room.force_play': {
+      // Viewer Requests Resume (triggers 3s countdown for all)
+      case 'player.request_play': {
         if (!room) break;
-        clearTimeout(room.readinessSafetyTimer);
-        room.waitingToPlay = false;
-        if (room.readiness) {
-          for (const u of room.clients.values()) {
-            room.readiness.set(u.id, { ready: true, name: u.name, time: room.player?.time || 0 });
-          }
-        }
-        room.seq = (room.seq || 0) + 1;
-        room.player = {
-          paused: false,
-          time: room.player?.time || 0,
-          serverTime: Date.now(),
-          seq: room.seq,
-          authorId: userId,
-          authorName: user.name,
-        };
-        logServer(`[Room ${room.id}] 🚀 Force play triggered by ${user.name} at ${formatTime(room.player.time)}`);
-        broadcastAll(room, 'room.readiness', {
-          readyCount: room.clients.size,
-          totalCount: room.clients.size,
-          waitingFor: [],
-          allReady: true,
-        });
-        broadcastAll(room, 'player.sync', room.player);
-        broadcastSystemMessage(room, `${user.name} force-started playback`);
+        const time = typeof payload.time === 'number' ? payload.time : (room.player?.time || 0);
+        startCountdown(room, 'PLAY', time, user);
         break;
       }
 
-      // ── Playback sync ────────────────────────────────────────────────────
+      // Cancel Countdown
+      case 'player.cancel_countdown': {
+        if (!room) break;
+        cancelCountdown(room, user);
+        break;
+      }
+
+      // Direct authoritative sync (Host manual seek or immediate command)
       case 'player.sync': {
         if (!room) break;
-        const { paused, time } = payload;
-        const now = Date.now();
-        const prevPaused = room.player?.paused;
-        const prevTime = room.player?.time || 0;
-        const newTime = Math.max(0, parseFloat(time) || 0);
-
-        // Safety backstop: Suppress identical echo within 350ms of last broadcast
-        if (room.player &&
-            room.player.paused === !!paused &&
-            Math.abs(prevTime - newTime) < 0.5 &&
-            now - room.player.serverTime < 350) {
-          logServer(`[Room ${room.id}] Echo sync suppressed from ${user.name}`);
+        const isHost = room.hostId === userId || room.clients.size === 1;
+        if (!isHost) {
+          // Ignore non-host direct sync
           break;
         }
+        const { paused, time } = payload;
+        const now = Date.now();
+        const newTime = Math.max(0, parseFloat(time) || 0);
 
         room.seq = (room.seq || 0) + 1;
         room.player = {
@@ -436,27 +480,12 @@ wss.on('connection', (ws, req) => {
           authorName: user.name,
         };
 
-        const timeDiff = (newTime - prevTime).toFixed(1);
-        const actionType = prevPaused !== !!paused ? (paused ? 'PAUSE' : 'PLAY') : (Math.abs(prevTime - newTime) > 2 ? 'SEEK' : 'UPDATE');
-        logServer(`[Room ${room.id}] Sync #${room.seq} [${actionType}] from ${user.name}: ${paused ? 'PAUSED' : 'PLAYING'} at ${formatTime(newTime)} (${newTime.toFixed(1)}s, Δ ${timeDiff >= 0 ? '+' : ''}${timeDiff}s)`);
-
-        // Relay to everyone else with server timestamp and seq
+        logServer(`[Room ${room.id}] Direct sync from Host (${user.name}): ${paused ? 'PAUSED' : 'PLAYING'} at ${formatTime(newTime)}`);
         broadcast(room, 'player.sync', room.player, ws);
-
-        // Chat log
-        if (prevPaused !== !!paused) {
-          if (paused) {
-            broadcastSystemMessage(room, `${user.name} paused at ${formatTime(newTime)}`);
-          } else {
-            broadcastSystemMessage(room, `${user.name} played at ${formatTime(newTime)}`);
-          }
-        } else if (Math.abs(prevTime - newTime) > 2) {
-          broadcastSystemMessage(room, `${user.name} seeked to ${formatTime(newTime)} (Δ ${timeDiff >= 0 ? '+' : ''}${timeDiff}s)`);
-        }
         break;
       }
 
-      // ── Chat ─────────────────────────────────────────────────────────────
+      // Chat
       case 'room.message': {
         if (!room) break;
         const content = (payload.content || '').trim().slice(0, 300);
@@ -473,32 +502,27 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
-      // ── Client timestamp / buffering heartbeat ───────────────────────────
+      // Client timestamp heartbeat
       case 'player.ts': {
         if (!room) break;
-        const { time, buffering, ready } = payload;
+        const { time, buffering } = payload;
         if (!room.tsMap) room.tsMap = new Map();
         room.tsMap.set(userId, {
           time: Math.max(0, parseFloat(time) || 0),
           buffering: !!buffering,
-          ready: ready !== undefined ? !!ready : true,
           updatedAt: Date.now(),
         });
         break;
       }
 
-      // ── Client Diagnostics & Buffer Health Telemetry ─────────────────────
+      // Telemetry log
       case 'player.diag': {
         if (!room) break;
         const { bufferAhead, pbr, drift, reason } = payload;
         const formattedBuffer = typeof bufferAhead === 'number' ? `${bufferAhead.toFixed(1)}s` : 'unknown';
         const formattedDrift = typeof drift === 'number' ? `${drift >= 0 ? '+' : ''}${drift.toFixed(2)}s` : '0s';
         if (reason === 'stall') {
-          logServer(`[Room ${room.id}] ⚠️ Playback stall on ${user.name}: buffer ahead=${formattedBuffer}, pbr=${pbr}x`);
-        } else if (reason === 'rate_change') {
-          logServer(`[Room ${room.id}] 🏎️ Catchup on ${user.name}: pbr=${pbr}x (drift: ${formattedDrift}, buffer: ${formattedBuffer})`);
-        } else if (reason === 'rate_reset') {
-          logServer(`[Room ${room.id}] 🎯 Back in sync on ${user.name}: pbr=1.0x (buffer: ${formattedBuffer})`);
+          logServer(`[Room ${room.id}] Playback stall on ${user.name}: buffer ahead=${formattedBuffer}`);
         }
         break;
       }
@@ -513,10 +537,16 @@ wss.on('connection', (ws, req) => {
     broadcastSystemMessage(room, `${user.name} left the room`);
 
     if (room.clients.size === 0) {
+      if (room.countdownTimer) {
+        clearTimeout(room.countdownTimer);
+        room.countdownTimer = null;
+        room.activeCountdown = null;
+      }
       if (room.id !== 'TEST' && room.id !== '000') {
         rooms.delete(room.id);
         logServer(`Room ${room.id} deleted (all users left)`);
       } else {
+        room.hostId = null;
         logServer(`Test Room ${room.id} is now empty and standing by`);
       }
       return;
@@ -527,9 +557,11 @@ wss.on('connection', (ws, req) => {
       const [nextWs, nextUser] = room.clients.entries().next().value;
       room.hostId = nextUser.id;
       broadcastAll(room, 'room.host', { hostId: nextUser.id });
+      broadcastAll(room, 'room.users', { users: roomUsers(room) });
       broadcastSystemMessage(room, `${nextUser.name} is now the room host`);
+    } else {
+      broadcastAll(room, 'room.users', { users: roomUsers(room) });
     }
-    broadcastAll(room, 'room.users', { users: roomUsers(room) });
   });
 
   ws.on('error', (err) => {
@@ -538,7 +570,7 @@ wss.on('connection', (ws, req) => {
   });
 });
 
-// ── Periodic Room Sync Heartbeat (1s) ─────────────────────────────────────────
+// Periodic Room Sync Heartbeat (1s)
 setInterval(() => {
   const now = Date.now();
   for (const room of rooms.values()) {
@@ -570,6 +602,7 @@ setInterval(() => {
 
     broadcastAll(room, 'room.tsMap', {
       tsMap: tsMapObj,
+      hostId: room.hostId,
       roomTime: currentRoomTime,
       paused: room.player?.paused ?? true,
       serverTime: now,
@@ -578,5 +611,5 @@ setInterval(() => {
 }, 1000);
 
 server.listen(PORT, '0.0.0.0', () => {
-  logServer(`❤️  HeartPeario server running on http://0.0.0.0:${PORT}`);
+  logServer(`HeartPeario server running on http://0.0.0.0:${PORT}`);
 });
