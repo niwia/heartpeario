@@ -175,7 +175,7 @@
         <button
           class="icon-btn settings-btn"
           @click="showSettingsModal = true"
-          title="Settings (Addons, Direct URL, Profile)"
+          title="Settings (Addons, Direct URL, Profile, TMDB API)"
         >
           <Icon name="settings" size="18" />
         </button>
@@ -187,6 +187,7 @@
 
       <!-- ── Player ───────────────────────────────────────────────── -->
       <div
+        ref="playerWrapEl"
         class="player-wrap"
         @mousemove="showControls"
         @mouseleave="scheduleHideControls"
@@ -293,20 +294,52 @@
           />
         </video>
 
-        <!-- ── Netflix-Style Pause Screen Overlay ────────────────────── -->
+        <!-- ── Smart Subtitle Overlay (Adaptive Positioning for Widescreen & Fullscreen) ── -->
+        <div
+          v-if="currentSubtitleCueText && !paused"
+          class="smart-subtitle-overlay"
+          :style="subtitlePositionStyle"
+        >
+          <div class="subtitle-cue-bubble" v-html="currentSubtitleCueText"></div>
+        </div>
+
+        <!-- ── TMDB-Enriched Netflix-Style Pause Screen Overlay ───────── -->
         <div
           v-if="room.url && paused && !room.activeCountdown"
           class="netflix-pause-overlay"
+          :style="pauseOverlayStyle"
           @click="togglePlay"
           title="Click anywhere to Play"
         >
           <div class="netflix-pause-content">
             <span class="pause-watching-label">You're watching</span>
             <h1 class="pause-title">{{ room.mediaMeta?.title || 'Video Stream' }}</h1>
-            <div v-if="room.mediaMeta?.episodeTitle || room.mediaMeta?.year" class="pause-sub-row">
-              <span v-if="room.mediaMeta?.episodeTitle" class="pause-ep">{{ room.mediaMeta.episodeTitle }}</span>
-              <span v-if="room.mediaMeta?.year" class="pause-year">({{ room.mediaMeta.year }})</span>
+
+            <p v-if="room.mediaMeta?.tagline" class="pause-tagline">
+              “{{ room.mediaMeta.tagline }}”
+            </p>
+
+            <div class="pause-meta-badges">
+              <span v-if="room.mediaMeta?.rating" class="pause-badge rating-badge">
+                ⭐ {{ room.mediaMeta.rating }}
+              </span>
+              <span v-if="room.mediaMeta?.runtime" class="pause-badge">
+                {{ room.mediaMeta.runtime }}
+              </span>
+              <span v-if="room.mediaMeta?.year" class="pause-badge">
+                {{ room.mediaMeta.year }}
+              </span>
+              <span v-if="room.mediaMeta?.episodeTitle" class="pause-badge episode-badge">
+                {{ room.mediaMeta.episodeTitle }}
+              </span>
             </div>
+
+            <div v-if="room.mediaMeta?.genres?.length" class="pause-genres-row">
+              <span v-for="g in room.mediaMeta.genres.slice(0, 3)" :key="g" class="genre-tag">
+                {{ g }}
+              </span>
+            </div>
+
             <p v-if="room.mediaMeta?.description" class="pause-description">
               {{ room.mediaMeta.description }}
             </p>
@@ -491,6 +524,7 @@
       v-if="showSourcesModal"
       :sources="cachedSources"
       :current-url="room.url"
+      :media-meta="room.mediaMeta"
       @close="showSourcesModal = false"
       @select-source="onSelectSource"
       @open-search="openSearchFromSources"
@@ -522,7 +556,8 @@ import { useRoute, useRouter } from 'vue-router';
 import { useRoomStore } from '@/stores/room';
 import { useProfileStore } from '@/stores/profile';
 import socket from '@/services/socket';
-import { srtToVtt, createVttUrlFromRemote } from '@/services/subtitle.service';
+import { srtToVtt, parseVttCues, loadSubtitleData } from '@/services/subtitle.service';
+import { enrichMediaWithTmdb } from '@/services/tmdb.service';
 
 import Icon from '@/components/Icon.vue';
 import SearchMediaModal from '@/components/SearchMediaModal.vue';
@@ -550,17 +585,62 @@ const showRoomCodeMenu = ref(false);
 const joinNameInput = ref('');
 const newRoomCodeInput = ref('');
 const joinNameInputEl = ref(null);
+const playerWrapEl = ref(null);
 
 const detectedAudioTracks = ref([]);
 const cachedSources = ref([]);
+
+// ── Smart Subtitle Overlay State ──────────────────────────────────────────
+const activeCues = ref([]);
+const activeSubTrackBlobUrl = ref(null);
+
+const currentSubtitleCueText = computed(() => {
+  if (!room.currentSubtitle || activeCues.value.length === 0) return '';
+  const t = currentTime.value;
+  const match = activeCues.value.find(c => t >= c.start && t <= c.end);
+  return match ? match.text : '';
+});
+
+const subtitlePositionStyle = computed(() => {
+  if (!playerWrapEl.value || !videoEl.value) {
+    return { bottom: controlsHidden.value ? '28px' : '68px' };
+  }
+
+  const vWidth = videoEl.value.videoWidth || 16;
+  const vHeight = videoEl.value.videoHeight || 9;
+  const videoAspect = vWidth / vHeight;
+
+  const rect = playerWrapEl.value.getBoundingClientRect();
+  const cWidth = rect.width || window.innerWidth;
+  const cHeight = rect.height || (window.innerHeight - 54);
+  const containerAspect = cWidth / cHeight;
+
+  if (containerAspect <= videoAspect) {
+    // Letterbox on top & bottom (typical widescreen movie)
+    const activeVideoHeight = cWidth / videoAspect;
+    const blackBarHeight = Math.max(0, (cHeight - activeVideoHeight) / 2);
+
+    if (blackBarHeight > 42) {
+      // Ample black bar: place subtitle right below video picture in upper letterbox
+      const bottomPx = Math.max(12, blackBarHeight - 34) + (controlsHidden.value ? 0 : 28);
+      return { bottom: `${bottomPx}px` };
+    } else {
+      // Narrow black bar or full screen: place subtitle over bottom edge of video picture
+      const bottomPx = Math.max(24, blackBarHeight + 20) + (controlsHidden.value ? 0 : 40);
+      return { bottom: `${bottomPx}px` };
+    }
+  } else {
+    // Pillarbox on left & right
+    const bottomPx = (controlsHidden.value ? 24 : 64);
+    return { bottom: `${bottomPx}px` };
+  }
+});
 
 const cleanRouteCode = computed(() => {
   return (route.params.roomId || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
 });
 const roomNotFound = ref(false);
 const roomNotFoundCode = ref('');
-
-const activeSubTrackBlobUrl = ref(null);
 const roomTsMap = ref({});
 
 // ── Recent Streams History (Up to last 5 items) ───────────────────────────
@@ -588,6 +668,11 @@ function saveRecentStreamRecord({ url, mediaMeta, subtitles, progressSeconds, du
       title: mediaMeta?.title || 'Video Stream',
       year: mediaMeta?.year || '',
       poster: mediaMeta?.poster || '',
+      backdrop: mediaMeta?.backdrop || null,
+      rating: mediaMeta?.rating || null,
+      runtime: mediaMeta?.runtime || null,
+      tagline: mediaMeta?.tagline || null,
+      genres: mediaMeta?.genres || [],
       episodeTitle: mediaMeta?.episodeTitle || null,
       description: mediaMeta?.description || '',
       season: mediaMeta?.season || null,
@@ -639,6 +724,11 @@ function resumeRecentStream(item) {
       title: item.title,
       year: item.year,
       poster: item.poster,
+      backdrop: item.backdrop,
+      rating: item.rating,
+      runtime: item.runtime,
+      tagline: item.tagline,
+      genres: item.genres,
       episodeTitle: item.episodeTitle,
       description: item.description || '',
       season: item.season,
@@ -694,6 +784,17 @@ const playPauseButtonTitle = computed(() => {
     return paused.value ? 'Start 3s countdown to Play (Space)' : 'Start 3s countdown to Pause (Space)';
   }
   return paused.value ? 'Request Resume (3s countdown)' : 'Request Pause (3s countdown)';
+});
+
+const pauseOverlayStyle = computed(() => {
+  if (room.mediaMeta?.backdrop) {
+    return {
+      backgroundImage: `linear-gradient(90deg, rgba(8, 8, 12, 0.95) 0%, rgba(8, 8, 12, 0.78) 50%, rgba(8, 8, 12, 0.88) 100%), url(${room.mediaMeta.backdrop})`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+    };
+  }
+  return {};
 });
 
 const countdownBottomText = computed(() => {
@@ -953,15 +1054,19 @@ async function loadCurrentSubtitle() {
       URL.revokeObjectURL(activeSubTrackBlobUrl.value);
       activeSubTrackBlobUrl.value = null;
     }
+    activeCues.value = [];
     ensureSubtitlesShowing();
     return;
   }
 
   try {
-    const vttUrl = await createVttUrlFromRemote(room.currentSubtitle.url, 0);
-    if (activeSubTrackBlobUrl.value) URL.revokeObjectURL(activeSubTrackBlobUrl.value);
-    activeSubTrackBlobUrl.value = vttUrl;
-    ensureSubtitlesShowing();
+    const data = await loadSubtitleData(room.currentSubtitle.url, 0);
+    if (data) {
+      if (activeSubTrackBlobUrl.value) URL.revokeObjectURL(activeSubTrackBlobUrl.value);
+      activeSubTrackBlobUrl.value = data.blobUrl;
+      activeCues.value = data.cues || [];
+      ensureSubtitlesShowing();
+    }
   } catch (err) {
     logDebug('Failed to load subtitle:', err);
     doToast('Failed to load subtitle track');
@@ -981,6 +1086,7 @@ function onLoadCustomSubtitle({ name, content }) {
     const url = URL.createObjectURL(blob);
     if (activeSubTrackBlobUrl.value) URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = url;
+    activeCues.value = parseVttCues(vtt);
     room.currentSubtitle = { lang: 'custom', langName: name, url: 'custom' };
     showSubtitlesModal.value = false;
     ensureSubtitlesShowing();
@@ -991,12 +1097,19 @@ function onLoadCustomSubtitle({ name, content }) {
 }
 
 // ── Stream / URL / Sources Management ─────────────────────────────────────
-function onStreamSelected({ url, mediaMeta, subtitles, sources }) {
+async function onStreamSelected({ url, mediaMeta, subtitles, sources }) {
   showSearchModal.value = false;
   if (sources?.length) cachedSources.value = sources;
 
+  let enrichedMeta = mediaMeta;
+  if (mediaMeta?.id) {
+    try {
+      enrichedMeta = await enrichMediaWithTmdb(mediaMeta);
+    } catch {}
+  }
+
   room.url = url;
-  room.mediaMeta = mediaMeta;
+  room.mediaMeta = enrichedMeta;
   room.subtitles = subtitles || [];
   room.currentSubtitle = null;
   lastAppliedSeq = 0;
@@ -1005,8 +1118,9 @@ function onStreamSelected({ url, mediaMeta, subtitles, sources }) {
     URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = null;
   }
+  activeCues.value = [];
 
-  socket.send('player.url', { url, mediaMeta, subtitles });
+  socket.send('player.url', { url, mediaMeta: enrichedMeta, subtitles });
 
   nextTick(() => {
     if (videoEl.value) {
@@ -1022,27 +1136,32 @@ function onStreamSelected({ url, mediaMeta, subtitles, sources }) {
 
   saveRecentStreamRecord({
     url,
-    mediaMeta,
+    mediaMeta: enrichedMeta,
     subtitles,
     progressSeconds: 0,
     durationSeconds: 0,
   });
 
-  if (url && mediaMeta) {
+  if (url && enrichedMeta) {
     profileStore.recordWatch({
-      id: mediaMeta.id,
-      title: mediaMeta.title,
-      episodeTitle: mediaMeta.episodeTitle,
-      year: mediaMeta.year,
-      poster: mediaMeta.poster,
-      description: mediaMeta.description || '',
+      id: enrichedMeta.id,
+      title: enrichedMeta.title,
+      episodeTitle: enrichedMeta.episodeTitle,
+      year: enrichedMeta.year,
+      poster: enrichedMeta.poster,
+      backdrop: enrichedMeta.backdrop,
+      rating: enrichedMeta.rating,
+      runtime: enrichedMeta.runtime,
+      tagline: enrichedMeta.tagline,
+      genres: enrichedMeta.genres,
+      description: enrichedMeta.description || '',
       url,
       progressSeconds: 0,
       durationSeconds: 0,
     });
   }
 
-  doToast(`Loaded: ${mediaMeta?.title || 'Stream'}`);
+  doToast(`Loaded: ${enrichedMeta?.title || 'Stream'}`);
 }
 
 function onSelectSource(source) {
@@ -1075,6 +1194,7 @@ function onLoadDirectUrl(url) {
     URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = null;
   }
+  activeCues.value = [];
 
   socket.send('player.url', { url, mediaMeta: null, subtitles: [] });
 
@@ -1217,8 +1337,16 @@ onMounted(async () => {
   }
 
   const offs = [
-    socket.on('room.joined', (data) => {
+    socket.on('room.joined', async (data) => {
       roomNotFound.value = false;
+
+      let enrichedMeta = data.mediaMeta;
+      if (data.mediaMeta?.id) {
+        try {
+          enrichedMeta = await enrichMediaWithTmdb(data.mediaMeta);
+        } catch {}
+      }
+
       room.$patch({
         roomId: data.roomId,
         isHost: data.isHost,
@@ -1226,7 +1354,7 @@ onMounted(async () => {
         you: data.you,
         users: data.users,
         url: data.url,
-        mediaMeta: data.mediaMeta || null,
+        mediaMeta: enrichedMeta || null,
         subtitles: data.subtitles || [],
         player: data.player,
         activeCountdown: data.activeCountdown || null,
@@ -1266,11 +1394,19 @@ onMounted(async () => {
       room.activeCountdown = null;
     }),
 
-    socket.on('player.url', (data) => {
+    socket.on('player.url', async (data) => {
       if (countdownInterval) clearInterval(countdownInterval);
       room.activeCountdown = null;
       room.url = data.url;
-      room.mediaMeta = data.mediaMeta || null;
+
+      let enrichedMeta = data.mediaMeta;
+      if (data.mediaMeta?.id) {
+        try {
+          enrichedMeta = await enrichMediaWithTmdb(data.mediaMeta);
+        } catch {}
+      }
+
+      room.mediaMeta = enrichedMeta || null;
       room.subtitles = data.subtitles || [];
       room.player = { paused: true, time: 0, serverTime: Date.now() };
       paused.value = true;
@@ -1288,21 +1424,26 @@ onMounted(async () => {
       if (data.url) {
         saveRecentStreamRecord({
           url: data.url,
-          mediaMeta: data.mediaMeta,
+          mediaMeta: enrichedMeta,
           subtitles: data.subtitles,
           progressSeconds: 0,
           durationSeconds: 0,
         });
       }
 
-      if (data.url && data.mediaMeta) {
+      if (data.url && enrichedMeta) {
         profileStore.recordWatch({
-          id: data.mediaMeta.id,
-          title: data.mediaMeta.title,
-          episodeTitle: data.mediaMeta.episodeTitle,
-          year: data.mediaMeta.year,
-          poster: data.mediaMeta.poster,
-          description: data.mediaMeta.description || '',
+          id: enrichedMeta.id,
+          title: enrichedMeta.title,
+          episodeTitle: enrichedMeta.episodeTitle,
+          year: enrichedMeta.year,
+          poster: enrichedMeta.poster,
+          backdrop: enrichedMeta.backdrop,
+          rating: enrichedMeta.rating,
+          runtime: enrichedMeta.runtime,
+          tagline: enrichedMeta.tagline,
+          genres: enrichedMeta.genres,
+          description: enrichedMeta.description || '',
           url: data.url,
           progressSeconds: 0,
           durationSeconds: 0,
@@ -1319,6 +1460,7 @@ onMounted(async () => {
           URL.revokeObjectURL(activeSubTrackBlobUrl.value);
           activeSubTrackBlobUrl.value = null;
         }
+        activeCues.value = [];
         ensureSubtitlesShowing();
       }
     }),
@@ -1905,7 +2047,7 @@ onMounted(async () => {
   cursor: pointer;
 }
 
-/* Subtitle Styling */
+/* Native Video Subtitle Styling */
 .player-wrap video::cue {
   color: #ffffff;
   font-family: inherit;
@@ -1917,11 +2059,37 @@ onMounted(async () => {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
-/* ── Netflix-Style Pause Screen Overlay ─────────────────────────────────── */
+/* ── Smart Subtitle Overlay ──────────────────────────────────────────────── */
+.smart-subtitle-overlay {
+  position: absolute;
+  left: 0; right: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+  z-index: 14;
+  transition: bottom 0.2s ease;
+  padding: 0 20px;
+}
+.subtitle-cue-bubble {
+  font-size: clamp(1.05rem, 2.2vw, 1.45rem);
+  font-weight: 600;
+  color: #ffffff;
+  text-align: center;
+  line-height: 1.35;
+  background: rgba(0, 0, 0, 0.68);
+  padding: 4px 14px;
+  border-radius: 6px;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9), 0 0 12px rgba(0, 0, 0, 0.85);
+  max-width: 80%;
+  animation: fade-in 0.1s ease both;
+}
+
+/* ── TMDB-Enriched Netflix-Style Pause Screen Overlay ─────────────────────── */
 .netflix-pause-overlay {
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 25% 45%, rgba(10, 10, 16, 0.78) 0%, rgba(0, 0, 0, 0.9) 100%);
+  background: radial-gradient(circle at 25% 45%, rgba(10, 10, 16, 0.85) 0%, rgba(0, 0, 0, 0.95) 100%);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -1931,10 +2099,10 @@ onMounted(async () => {
   animation: fade-in 0.2s ease both;
 }
 .netflix-pause-content {
-  max-width: 580px;
+  max-width: 620px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   margin-top: auto;
   margin-bottom: auto;
 }
@@ -1942,30 +2110,66 @@ onMounted(async () => {
   font-size: 0.85rem;
   font-weight: 600;
   color: rgba(255, 255, 255, 0.75);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 .pause-title {
-  font-size: 2.5rem;
+  font-size: 2.6rem;
   font-weight: 800;
   color: #ffffff;
   letter-spacing: -0.02em;
   line-height: 1.1;
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
 }
-.pause-sub-row {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 1.05rem;
-  font-weight: 700;
+.pause-tagline {
+  font-size: 0.95rem;
+  font-style: italic;
   color: rgba(255, 255, 255, 0.9);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+}
+.pause-meta-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.pause-badge {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.rating-badge {
+  color: #f5c518;
+  border-color: rgba(245, 197, 24, 0.35);
+  background: rgba(245, 197, 24, 0.12);
+}
+.episode-badge {
+  color: #3dbe7a;
+  border-color: rgba(61, 190, 122, 0.35);
+  background: rgba(61, 190, 122, 0.12);
+}
+.pause-genres-row {
+  display: flex;
+  gap: 6px;
+  margin-top: -2px;
+}
+.genre-tag {
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.4);
+  padding: 1px 6px;
+  border-radius: 3px;
 }
 .pause-description {
-  font-size: 0.95rem;
+  font-size: 0.92rem;
   color: rgba(255, 255, 255, 0.85);
   line-height: 1.5;
-  margin-top: 6px;
+  margin-top: 4px;
   display: -webkit-box;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;

@@ -7,43 +7,65 @@
         <div class="header-title">
           <Icon name="sources" size="18" />
           <h2>Stream Sources</h2>
-          <span v-if="sources.length" class="count-badge">{{ sources.length }}</span>
+          <span v-if="allSources.length" class="count-badge">{{ allSources.length }}</span>
         </div>
         <button class="close-btn" @click="$emit('close')" title="Close">
           <Icon name="close" size="18" />
         </button>
       </div>
 
+      <!-- Media Subtitle Info if Available -->
+      <div v-if="mediaMeta?.title" class="source-media-bar">
+        <span class="sm-title">{{ mediaMeta.title }}</span>
+        <span v-if="mediaMeta.episodeTitle" class="sm-ep">{{ mediaMeta.episodeTitle }}</span>
+        <span v-if="mediaMeta.year" class="sm-year">({{ mediaMeta.year }})</span>
+      </div>
+
       <!-- Body: List of Sources -->
       <div class="modal-body">
-        <div v-if="sources.length === 0" class="empty-sources">
+
+        <!-- Loading State -->
+        <div v-if="loading" class="loading-sources-row">
+          <div class="spinner-sm"></div>
+          <span>Querying active addons for available streams...</span>
+        </div>
+
+        <!-- Empty State -->
+        <div v-if="allSources.length === 0 && !loading" class="empty-sources">
           <Icon name="sources" size="32" class="empty-icon" />
-          <p class="empty-title">No cached sources available</p>
-          <p class="empty-sub">Search for this title in the catalog to query stream addons.</p>
+          <p class="empty-title">No sources found</p>
+          <p class="empty-sub">Search for this title in the catalog or check your installed addons.</p>
           <button class="btn-search-catalog" @click="$emit('open-search')">
             <Icon name="search" size="15" />
             <span>Search Catalog</span>
           </button>
         </div>
 
+        <!-- Sources List -->
         <div v-else class="sources-list">
           <div
-            v-for="(s, idx) in sources"
+            v-for="(s, idx) in allSources"
             :key="s.url || idx"
             class="source-card"
-            :class="{ active: currentUrl === s.url }"
+            :class="{ active: currentUrl === (s.url || s.externalUrl) }"
             @click="selectSource(s)"
           >
             <div class="source-left">
               <div class="addon-badge">{{ s.addonName || 'Addon' }}</div>
               <div class="source-meta">
-                <span class="source-name">{{ s.name || s.title || 'Stream ' + (idx + 1) }}</span>
-                <span v-if="s.details" class="source-details">{{ s.details }}</span>
+                <div class="source-name-row">
+                  <span class="source-name">{{ s.name || s.title || 'Stream ' + (idx + 1) }}</span>
+                  <span v-if="extractQuality(s)" class="quality-pill" :class="qualityClass(extractQuality(s))">
+                    {{ extractQuality(s) }}
+                  </span>
+                </div>
+                <span v-if="s.title && s.name !== s.title" class="source-details">{{ s.title }}</span>
+                <span v-else-if="s.details" class="source-details">{{ s.details }}</span>
               </div>
             </div>
 
             <div class="source-right">
-              <span v-if="currentUrl === s.url" class="playing-badge">PLAYING</span>
+              <span v-if="currentUrl === (s.url || s.externalUrl)" class="playing-badge">PLAYING</span>
               <button v-else class="btn-switch-source">
                 Select
               </button>
@@ -54,6 +76,15 @@
 
       <!-- Footer -->
       <div class="modal-footer">
+        <button
+          v-if="mediaMeta?.id"
+          class="btn-refresh-sources"
+          :disabled="loading"
+          @click="autoFetchSources"
+          title="Refresh and query addons again"
+        >
+          Refresh Streams
+        </button>
         <button class="btn-done" @click="$emit('close')">Done</button>
       </div>
 
@@ -62,6 +93,9 @@
 </template>
 
 <script setup>
+import { ref, computed, onMounted } from 'vue';
+import { useAddonsStore } from '@/stores/addons';
+import { fetchStreamsProgressive } from '@/services/stremio.service';
 import Icon from '@/components/Icon.vue';
 
 const props = defineProps({
@@ -73,14 +107,68 @@ const props = defineProps({
     type: String,
     default: '',
   },
+  mediaMeta: {
+    type: Object,
+    default: null,
+  },
 });
 
 const emit = defineEmits(['close', 'select-source', 'open-search']);
+
+const addonsStore = useAddonsStore();
+const fetchedSources = ref([]);
+const loading = ref(false);
+
+const allSources = computed(() => {
+  if (fetchedSources.value.length > 0) return fetchedSources.value;
+  return props.sources || [];
+});
+
+async function autoFetchSources() {
+  if (!props.mediaMeta?.id) return;
+  loading.value = true;
+  fetchedSources.value = [];
+
+  const type = props.mediaMeta.type === 'series' || props.mediaMeta.type === 'tv' ? 'series' : 'movie';
+  const id = props.mediaMeta.episodeId || props.mediaMeta.id;
+
+  try {
+    await fetchStreamsProgressive(addonsStore.streamAddons, type, id, (chunk) => {
+      fetchedSources.value.push(...chunk);
+    });
+  } catch (err) {
+    console.error('[Sources] Failed to fetch streams:', err);
+  } finally {
+    loading.value = false;
+  }
+}
 
 function selectSource(source) {
   emit('select-source', source);
   emit('close');
 }
+
+function extractQuality(stream) {
+  const text = `${stream.name || ''} ${stream.title || ''} ${stream.description || ''}`.toUpperCase();
+  if (text.includes('4K') || text.includes('2160P')) return '4K';
+  if (text.includes('1080P')) return '1080p';
+  if (text.includes('720P')) return '720p';
+  if (text.includes('480P') || text.includes('360P')) return 'SD';
+  return '';
+}
+
+function qualityClass(q) {
+  if (q === '4K') return 'q-4k';
+  if (q === '1080p') return 'q-1080';
+  if (q === '720p') return 'q-720';
+  return 'q-sd';
+}
+
+onMounted(() => {
+  if ((!props.sources || props.sources.length === 0) && props.mediaMeta?.id) {
+    autoFetchSources();
+  }
+});
 </script>
 
 <style scoped>
@@ -98,8 +186,8 @@ function selectSource(source) {
 }
 
 .modal-card {
-  width: min(520px, 100%);
-  max-height: 80vh;
+  width: min(540px, 100%);
+  max-height: 82vh;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -155,11 +243,37 @@ function selectSource(source) {
   border-color: var(--border-light);
 }
 
+.source-media-bar {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 20px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+.sm-title { font-weight: 700; color: #ffffff; }
+.sm-ep { color: rgba(255, 255, 255, 0.85); }
+.sm-year { color: var(--muted); }
+
 .modal-body {
   padding: 16px 20px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+}
+
+.loading-sources-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 0.82rem;
+  margin-bottom: 10px;
 }
 
 .empty-sources {
@@ -245,6 +359,11 @@ function selectSource(source) {
   gap: 2px;
   overflow: hidden;
 }
+.source-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .source-name {
   font-size: 0.85rem;
   font-weight: 600;
@@ -253,6 +372,18 @@ function selectSource(source) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.quality-pill {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 1px 4px;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+}
+.q-4k { background: rgba(224, 61, 90, 0.2); color: #e03d5a; border: 1px solid rgba(224, 61, 90, 0.4); }
+.q-1080 { background: rgba(90, 125, 224, 0.2); color: #5a7de0; border: 1px solid rgba(90, 125, 224, 0.4); }
+.q-720 { background: rgba(61, 190, 122, 0.2); color: #3dbe7a; border: 1px solid rgba(61, 190, 122, 0.4); }
+.q-sd { background: rgba(255, 255, 255, 0.1); color: var(--muted); border: 1px solid var(--border); }
+
 .source-details {
   font-size: 0.72rem;
   color: var(--muted);
@@ -292,11 +423,24 @@ function selectSource(source) {
 
 .modal-footer {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
+  justify-content: space-between;
   padding: 12px 20px;
   border-top: 1px solid var(--border);
   background: var(--surface);
 }
+.btn-refresh-sources {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+  transition: color 0.15s;
+}
+.btn-refresh-sources:hover:not(:disabled) { color: #ffffff; }
+
 .btn-done {
   padding: 8px 22px;
   background: transparent;
@@ -313,5 +457,14 @@ function selectSource(source) {
   border-color: #ffffff;
 }
 
+.spinner-sm {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 </style>

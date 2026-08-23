@@ -173,10 +173,28 @@
             </div>
           </div>
 
+          <div class="profile-section">
+            <label class="section-label">TMDB API Key / Token (Metadata & HD Backdrops)</label>
+            <div class="name-edit-row">
+              <input
+                v-model="tmdbKeyInput"
+                type="text"
+                placeholder="Optional custom TMDB API Key"
+                spellcheck="false"
+              />
+              <button class="btn-save-name" @click="saveTmdbKey">
+                Save
+              </button>
+            </div>
+            <p class="tmdb-hint">
+              HeartPeario automatically enriches movies/shows with HD backdrops, ratings, and plot summaries via TMDB. You can supply your own API key or use default.
+            </p>
+          </div>
+
           <div class="vault-info-box">
             <span class="v-title">Private Browser Storage</span>
             <p class="v-desc">
-              Your profile, display name, and addons are encrypted and kept inside your local browser storage.
+              Your profile, display name, and addons are kept secure inside your local browser storage.
             </p>
           </div>
         </div>
@@ -196,6 +214,7 @@
 import { ref } from 'vue';
 import { useAddonsStore } from '@/stores/addons';
 import { useProfileStore } from '@/stores/profile';
+import { getTmdbApiKey, getTmdbToken, setTmdbApiKey } from '@/services/tmdb.service';
 import socket from '@/services/socket';
 import Icon from '@/components/Icon.vue';
 
@@ -221,10 +240,15 @@ const addonSuccess = ref('');
 // Direct URL state
 const directUrlInput = ref('');
 
-// Profile state
+// Profile & TMDB state
 const profileNameInput = ref(profileStore.current.name || '');
 const profileColor = ref(profileStore.current.avatarColor || '#e03d5a');
+const tmdbKeyInput = ref(localStorage.getItem('hp-tmdb-api-key') || '');
 const AVAILABLE_COLORS = ['#e03d5a', '#5a7de0', '#3dbe7a', '#e0a83d', '#a03de0', '#e05a3d', '#3dbde0', '#ffffff'];
+
+function saveTmdbKey() {
+  setTmdbApiKey(tmdbKeyInput.value, tmdbKeyInput.value);
+}
 
 async function installAddon() {
   addonError.value = '';

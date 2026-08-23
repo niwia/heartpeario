@@ -92,19 +92,73 @@ export function srtToVtt(srtText, offsetMs = 0) {
   return `WEBVTT\n\n${converted}`;
 }
 
+export function parseVttCues(vttText) {
+  if (!vttText) return [];
+  const cues = [];
+  const clean = vttText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const blocks = clean.split(/\n\s*\n/);
+
+  function parseTime(tStr) {
+    if (!tStr) return 0;
+    const parts = tStr.trim().split(':');
+    let h = 0, m = 0, s = 0;
+    if (parts.length === 3) {
+      h = parseFloat(parts[0]);
+      m = parseFloat(parts[1]);
+      s = parseFloat(parts[2].replace(',', '.'));
+    } else if (parts.length === 2) {
+      m = parseFloat(parts[0]);
+      s = parseFloat(parts[1].replace(',', '.'));
+    }
+    return h * 3600 + m * 60 + s;
+  }
+
+  for (const block of blocks) {
+    const lines = block.trim().split('\n');
+    const timeLineIdx = lines.findIndex(l => l.includes('-->'));
+    if (timeLineIdx >= 0) {
+      const timePart = lines[timeLineIdx];
+      const parts = timePart.split('-->');
+      if (parts.length === 2) {
+        const t1 = parts[0].trim().split(' ')[0];
+        const t2 = parts[1].trim().split(' ')[0];
+        const text = lines.slice(timeLineIdx + 1).join('<br>').trim();
+        if (text) {
+          cues.push({
+            start: parseTime(t1),
+            end: parseTime(t2),
+            text,
+          });
+        }
+      }
+    }
+  }
+  return cues;
+}
+
 /**
- * Fetch subtitle text from a URL and create a Blob WebVTT track URL
+ * Fetch subtitle text from a URL, create a WebVTT blob, and parse cues
  */
-export async function createVttUrlFromRemote(url, offsetMs = 0) {
+export async function loadSubtitleData(url, offsetMs = 0) {
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Subtitle HTTP ${res.status}`);
     const srtContent = await res.text();
     const vtt = srtToVtt(srtContent, offsetMs);
     const blob = new Blob([vtt], { type: 'text/vtt;charset=utf-8' });
-    return URL.createObjectURL(blob);
+    const blobUrl = URL.createObjectURL(blob);
+    const cues = parseVttCues(vtt);
+    return { blobUrl, vtt, cues };
   } catch (err) {
-    console.warn('[Subtitles] Failed to fetch/parse subtitle URL:', url, err);
+    console.warn('[Subtitles] Failed to load subtitle data:', url, err);
     return null;
   }
+}
+
+/**
+ * Fetch subtitle text from a URL and create a Blob WebVTT track URL
+ */
+export async function createVttUrlFromRemote(url, offsetMs = 0) {
+  const data = await loadSubtitleData(url, offsetMs);
+  return data?.blobUrl || null;
 }
