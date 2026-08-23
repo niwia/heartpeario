@@ -498,13 +498,13 @@
     <SearchMediaModal
       v-if="showSearchModal"
       @close="showSearchModal = false"
-      @stream-selected="onStreamSelected"
+      @select-stream="onStreamSelected"
+      @selectStream="onStreamSelected"
     />
 
     <AddonManagerModal
       v-if="showAddonsModal"
       @close="showAddonsModal = false"
-      @stream-selected="onStreamSelected"
     />
 
     <SubtitlesModal
@@ -522,7 +522,8 @@
     <ProfileModal
       v-if="showProfileModal"
       @close="showProfileModal = false"
-      @stream-selected="onStreamSelected"
+      @select-stream="onStreamSelected"
+      @selectStream="onStreamSelected"
       @rename="openRenameModal"
     />
 
@@ -859,6 +860,8 @@ function onLoadCustomSubtitle({ name, content }) {
 
 // ── Stream / URL Management ───────────────────────────────────────────────
 function onStreamSelected({ url, mediaMeta, subtitles }) {
+  showSearchModal.value = false;
+  showProfileModal.value = false;
   room.url = url;
   room.mediaMeta = mediaMeta;
   room.subtitles = subtitles || [];
@@ -870,6 +873,12 @@ function onStreamSelected({ url, mediaMeta, subtitles }) {
   }
 
   socket.send('player.url', { url, mediaMeta, subtitles });
+
+  nextTick(() => {
+    if (videoEl.value) {
+      videoEl.value.load();
+    }
+  });
 
   if (subtitles?.length) {
     const defaultSub = subtitles.find(s => ['eng', 'en'].includes(s.lang?.toLowerCase())) || subtitles[0];
@@ -890,7 +899,7 @@ function onStreamSelected({ url, mediaMeta, subtitles }) {
     });
   }
 
-  doToast(`Loaded: ${mediaMeta.title}`);
+  doToast(`Loaded: ${mediaMeta?.title || 'Stream'}`);
 }
 
 function toggleUrlBar() {
@@ -918,8 +927,14 @@ function setDirectUrl() {
     activeSubTrackBlobUrl.value = null;
   }
   socket.send('player.url', { url, mediaMeta: null, subtitles: [] });
+  nextTick(() => {
+    if (videoEl.value) {
+      videoEl.value.load();
+    }
+  });
   urlInput.value = '';
   showUrlBar.value = false;
+  doToast('Loaded direct video stream');
 }
 
 // ── UI Helpers ────────────────────────────────────────────────────
@@ -1130,6 +1145,12 @@ onMounted(async () => {
       showUrlBar.value = false;
       lastAppliedSeq = 0;
 
+      nextTick(() => {
+        if (videoEl.value) {
+          videoEl.value.load();
+        }
+      });
+
       if (data.url && data.mediaMeta) {
         profileStore.recordWatch({
           id: data.mediaMeta.id,
@@ -1137,7 +1158,7 @@ onMounted(async () => {
           episodeTitle: data.mediaMeta.episodeTitle,
           year: data.mediaMeta.year,
           poster: data.mediaMeta.poster,
-          url,
+          url: data.url,
           progressSeconds: 0,
           durationSeconds: 0,
         });
