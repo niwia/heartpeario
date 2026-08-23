@@ -90,7 +90,7 @@ function onSelect(index) {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  z-index: 1000;
+  z-index: 2500;
   animation: fade-in 0.2s ease both;
 }
 

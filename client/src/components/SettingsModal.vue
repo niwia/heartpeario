@@ -243,11 +243,14 @@ const directUrlInput = ref('');
 // Profile & TMDB state
 const profileNameInput = ref(profileStore.current.name || '');
 const profileColor = ref(profileStore.current.avatarColor || '#e03d5a');
-const tmdbKeyInput = ref(localStorage.getItem('hp-tmdb-api-key') || '');
+const tmdbKeyInput = ref(getTmdbApiKey() || '');
+const tmdbSaved = ref(false);
 const AVAILABLE_COLORS = ['#e03d5a', '#5a7de0', '#3dbe7a', '#e0a83d', '#a03de0', '#e05a3d', '#3dbde0', '#ffffff'];
 
 function saveTmdbKey() {
   setTmdbApiKey(tmdbKeyInput.value, tmdbKeyInput.value);
+  tmdbSaved.value = true;
+  setTimeout(() => { tmdbSaved.value = false; }, 2500);
 }
 
 async function installAddon() {
@@ -263,11 +266,16 @@ async function installAddon() {
 }
 
 function resetAddons() {
-  addonsStore.resetToDefault();
-  addonSuccess.value = 'Restored default addons.';
+  addonsStore.resetToDefaults();
+  addonSuccess.value = 'Addons reset to defaults!';
+  setTimeout(() => { addonSuccess.value = ''; }, 3000);
 }
 
-function submitDirectUrl() {
+function removeAddon(manifestUrl) {
+  addonsStore.removeAddon(manifestUrl);
+}
+
+function handleDirectUrlSubmit() {
   const url = directUrlInput.value.trim();
   if (!url) return;
   emit('load-direct-url', url);
@@ -284,7 +292,8 @@ function saveProfileName() {
 
 function selectColor(color) {
   profileColor.value = color;
-  profileStore.updateCurrentAvatarColor(color);
+  profileStore.updateCurrentColor(color);
+  socket.send('user.color', { color });
 }
 </script>
 
@@ -298,7 +307,7 @@ function selectColor(color) {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  z-index: 1000;
+  z-index: 2500;
   animation: fade-in 0.2s ease both;
 }
 

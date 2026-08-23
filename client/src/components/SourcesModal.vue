@@ -7,7 +7,7 @@
         <div class="header-title">
           <Icon name="sources" size="18" />
           <h2>Stream Sources</h2>
-          <span v-if="allSources.length" class="count-badge">{{ allSources.length }}</span>
+          <span v-if="allSources.length" class="count-badge">{{ filteredSources.length }} of {{ allSources.length }}</span>
         </div>
         <button class="close-btn" @click="$emit('close')" title="Close">
           <Icon name="close" size="18" />
@@ -21,6 +21,26 @@
         <span v-if="mediaMeta.year" class="sm-year">({{ mediaMeta.year }})</span>
       </div>
 
+      <!-- Addon Filter Tabs -->
+      <div v-if="availableAddonNames.length > 1" class="addon-filter-tabs-bar">
+        <button
+          class="addon-filter-btn"
+          :class="{ active: selectedAddonFilter === 'all' }"
+          @click="selectedAddonFilter = 'all'"
+        >
+          All ({{ allSources.length }})
+        </button>
+        <button
+          v-for="addon in availableAddonNames"
+          :key="addon.name"
+          class="addon-filter-btn"
+          :class="{ active: selectedAddonFilter === addon.name }"
+          @click="selectedAddonFilter = addon.name"
+        >
+          {{ addon.name }} ({{ addon.count }})
+        </button>
+      </div>
+
       <!-- Body: List of Sources -->
       <div class="modal-body">
 
@@ -31,7 +51,7 @@
         </div>
 
         <!-- Empty State -->
-        <div v-if="allSources.length === 0 && !loading" class="empty-sources">
+        <div v-if="filteredSources.length === 0 && !loading" class="empty-sources">
           <Icon name="sources" size="32" class="empty-icon" />
           <p class="empty-title">No sources found</p>
           <p class="empty-sub">Search for this title in the catalog or check your installed addons.</p>
@@ -44,7 +64,7 @@
         <!-- Sources List -->
         <div v-else class="sources-list">
           <div
-            v-for="(s, idx) in allSources"
+            v-for="(s, idx) in filteredSources"
             :key="s.url || idx"
             class="source-card"
             :class="{ active: currentUrl === (s.url || s.externalUrl) }"
@@ -118,16 +138,32 @@ const emit = defineEmits(['close', 'select-source', 'open-search']);
 const addonsStore = useAddonsStore();
 const fetchedSources = ref([]);
 const loading = ref(false);
+const selectedAddonFilter = ref('all');
 
 const allSources = computed(() => {
   if (fetchedSources.value.length > 0) return fetchedSources.value;
   return props.sources || [];
 });
 
+const availableAddonNames = computed(() => {
+  const map = new Map();
+  allSources.value.forEach(s => {
+    const name = s.addonName || 'Addon';
+    map.set(name, (map.get(name) || 0) + 1);
+  });
+  return Array.from(map.entries()).map(([name, count]) => ({ name, count }));
+});
+
+const filteredSources = computed(() => {
+  if (selectedAddonFilter.value === 'all') return allSources.value;
+  return allSources.value.filter(s => (s.addonName || 'Addon') === selectedAddonFilter.value);
+});
+
 async function autoFetchSources() {
   if (!props.mediaMeta?.id) return;
   loading.value = true;
   fetchedSources.value = [];
+  selectedAddonFilter.value = 'all';
 
   const type = props.mediaMeta.type === 'series' || props.mediaMeta.type === 'tv' ? 'series' : 'movie';
   const id = props.mediaMeta.episodeId || props.mediaMeta.id;
@@ -181,19 +217,19 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  z-index: 1000;
+  z-index: 2500;
   animation: fade-in 0.2s ease both;
 }
 
 .modal-card {
-  width: min(540px, 100%);
-  max-height: 82vh;
+  width: min(560px, 100%);
+  max-height: 84vh;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.8);
   overflow: hidden;
 }
 
@@ -255,6 +291,36 @@ onMounted(() => {
 .sm-title { font-weight: 700; color: #ffffff; }
 .sm-ep { color: rgba(255, 255, 255, 0.85); }
 .sm-year { color: var(--muted); }
+
+.addon-filter-tabs-bar {
+  display: flex;
+  gap: 6px;
+  padding: 8px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+.addon-filter-btn {
+  padding: 4px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.addon-filter-btn:hover {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.addon-filter-btn.active {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+  color: #ffffff;
+}
 
 .modal-body {
   padding: 16px 20px;

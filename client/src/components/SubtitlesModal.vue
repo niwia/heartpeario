@@ -37,13 +37,9 @@
 
         <!-- Subtitles List -->
         <div class="subs-section">
-          <div class="subs-header">
-            <span class="section-label">Available Subtitle Tracks ({{ effectiveSubs.length }})</span>
-            <span v-if="loadingRemoteSubs" class="spinner-sm"></span>
-          </div>
 
+          <!-- Option: Subtitles Off -->
           <div class="subs-list">
-            <!-- Option: Subtitles Off -->
             <button
               class="sub-item"
               :class="{ active: !currentSubtitle }"
@@ -52,27 +48,60 @@
               <span class="sub-lang">Disabled (Off)</span>
               <Icon v-if="!currentSubtitle" name="check" size="16" />
             </button>
+          </div>
 
-            <!-- Remote subtitle tracks -->
-            <button
-              v-for="(sub, idx) in effectiveSubs"
-              :key="idx"
-              class="sub-item"
-              :class="{ active: currentSubtitle?.url === sub.url }"
-              @click="chooseSubtitle(sub)"
-            >
-              <div class="sub-info">
-                <span class="sub-lang">{{ getLanguageName(sub.lang) || sub.lang || 'Subtitle' }}</span>
-                <span class="sub-code">{{ (sub.lang || 'SUB').toUpperCase() }}</span>
-                <span v-if="sub.addonName" class="sub-addon-tag">{{ sub.addonName }}</span>
-              </div>
-              <Icon v-if="currentSubtitle?.url === sub.url" name="check" size="16" />
-            </button>
-
-            <div v-if="!effectiveSubs.length && !loadingRemoteSubs" class="no-subs">
-              No remote subtitle tracks found for this stream. You can upload a custom .srt file above.
+          <!-- Section 1: Stream Provided Subtitles (Top Priority) -->
+          <div v-if="streamSubtitles.length" class="subs-sub-group">
+            <div class="subs-header">
+              <span class="section-label">From Selected Stream ({{ streamSubtitles.length }})</span>
+            </div>
+            <div class="subs-list">
+              <button
+                v-for="(sub, idx) in streamSubtitles"
+                :key="'stream-' + idx"
+                class="sub-item stream-sub-item"
+                :class="{ active: currentSubtitle?.url === sub.url }"
+                @click="chooseSubtitle(sub)"
+              >
+                <div class="sub-info">
+                  <span class="sub-lang">{{ getLanguageName(sub.lang) || sub.lang || 'Stream Subtitle' }}</span>
+                  <span class="sub-code">{{ (sub.lang || 'SUB').toUpperCase() }}</span>
+                  <span class="stream-badge">STREAM</span>
+                </div>
+                <Icon v-if="currentSubtitle?.url === sub.url" name="check" size="16" />
+              </button>
             </div>
           </div>
+
+          <!-- Section 2: Online Addon Subtitles -->
+          <div class="subs-sub-group">
+            <div class="subs-header">
+              <span class="section-label">Online Addon Subtitles ({{ addonSubtitles.length }})</span>
+              <span v-if="loadingRemoteSubs" class="spinner-sm"></span>
+            </div>
+
+            <div class="subs-list">
+              <button
+                v-for="(sub, idx) in addonSubtitles"
+                :key="'addon-' + idx"
+                class="sub-item"
+                :class="{ active: currentSubtitle?.url === sub.url }"
+                @click="chooseSubtitle(sub)"
+              >
+                <div class="sub-info">
+                  <span class="sub-lang">{{ getLanguageName(sub.lang) || sub.lang || 'Subtitle' }}</span>
+                  <span class="sub-code">{{ (sub.lang || 'SUB').toUpperCase() }}</span>
+                  <span v-if="sub.addonName" class="sub-addon-tag">{{ sub.addonName }}</span>
+                </div>
+                <Icon v-if="currentSubtitle?.url === sub.url" name="check" size="16" />
+              </button>
+
+              <div v-if="!addonSubtitles.length && !loadingRemoteSubs && !streamSubtitles.length" class="no-subs">
+                No remote subtitle tracks found for this stream. You can upload a custom .srt file above.
+              </div>
+            </div>
+          </div>
+
         </div>
 
       </div>
@@ -130,6 +159,14 @@ const effectiveSubs = computed(() => {
   });
 });
 
+const streamSubtitles = computed(() => {
+  return effectiveSubs.value.filter(s => s.isStreamSub);
+});
+
+const addonSubtitles = computed(() => {
+  return effectiveSubs.value.filter(s => !s.isStreamSub);
+});
+
 function chooseSubtitle(sub) {
   emit('select', sub);
 }
@@ -161,8 +198,8 @@ function handleCustomFile(file) {
 }
 
 onMounted(async () => {
-  // If no subtitles were passed but we have media metadata (e.g. IMDb ID), fetch on demand
-  if (effectiveSubs.value.length === 0 && props.mediaMeta?.id) {
+  // If no addon subtitles were passed but we have media metadata (e.g. IMDb ID), fetch on demand
+  if (addonSubtitles.value.length === 0 && props.mediaMeta?.id) {
     loadingRemoteSubs.value = true;
     try {
       const type = props.mediaMeta.type || 'movie';
@@ -188,19 +225,19 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  z-index: 1000;
+  z-index: 2500;
   animation: fade-in 0.2s ease both;
 }
 
 .modal-card {
-  width: min(520px, 100%);
-  max-height: 80vh;
+  width: min(500px, 100%);
+  max-height: 82vh;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.8);
   overflow: hidden;
 }
 
@@ -215,10 +252,10 @@ onMounted(async () => {
 .header-title {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 .header-title h2 {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 700;
   color: #ffffff;
 }
@@ -237,101 +274,108 @@ onMounted(async () => {
 }
 .close-btn:hover {
   color: #ffffff;
-  border-color: var(--border-light);
   background: var(--surface2);
+  border-color: var(--border-light);
 }
 
 .modal-body {
-  padding: 18px 20px;
+  padding: 16px 20px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-/* Drop Zone */
 .drop-zone {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  background: var(--surface2);
-  border: 1px dashed var(--border-light);
+  border: 1px dashed rgba(255, 255, 255, 0.25);
   border-radius: var(--radius-sm);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   cursor: pointer;
-  color: var(--muted);
+  background: rgba(255, 255, 255, 0.02);
   transition: all 0.15s;
+  color: var(--muted);
 }
 .drop-zone:hover, .drop-zone.dragging {
   border-color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.04);
 }
 .drop-text {
   font-size: 0.82rem;
 }
 .drop-text code {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.08);
-  padding: 1px 4px;
+  background: var(--surface2);
+  padding: 2px 5px;
   border-radius: 3px;
+  color: #ffffff;
 }
 
-/* Subtitles List */
 .subs-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
+
+.subs-sub-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .subs-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 .section-label {
-  font-size: 0.75rem;
+  font-size: 0.74rem;
   font-weight: 700;
-  color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-}
-
-.spinner-sm {
-  width: 14px; height: 14px;
-  border: 2px solid rgba(255, 255, 255, 0.2);
-  border-top-color: #ffffff;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
+  color: var(--muted);
 }
 
 .subs-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 280px;
-  overflow-y: auto;
 }
 
 .sub-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 9px 14px;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: #ffffff;
+  font-size: 0.84rem;
+  font-weight: 500;
   cursor: pointer;
   transition: all 0.15s;
 }
 .sub-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.35);
 }
 .sub-item.active {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
   border-color: #ffffff;
-  color: #ffffff;
+}
+
+.stream-sub-item {
+  border-color: rgba(61, 190, 122, 0.3);
+  background: rgba(61, 190, 122, 0.05);
+}
+.stream-sub-item:hover {
+  border-color: rgba(61, 190, 122, 0.6);
+  background: rgba(61, 190, 122, 0.1);
 }
 
 .sub-info {
@@ -340,31 +384,41 @@ onMounted(async () => {
   gap: 8px;
 }
 .sub-lang {
-  font-size: 0.88rem;
   font-weight: 600;
+  color: #ffffff;
 }
 .sub-code {
   font-size: 0.68rem;
+  font-weight: 800;
   color: var(--muted);
-  background: rgba(255, 255, 255, 0.08);
-  padding: 2px 6px;
-  border-radius: 4px;
+}
+.stream-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  background: rgba(61, 190, 122, 0.2);
+  color: #3dbe7a;
+  border: 1px solid rgba(61, 190, 122, 0.4);
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.03em;
 }
 .sub-addon-tag {
-  font-size: 0.65rem;
-  color: var(--gold);
+  font-size: 0.68rem;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
 }
 
 .no-subs {
-  text-align: center;
-  padding: 16px;
-  color: var(--muted);
   font-size: 0.82rem;
-  background: var(--surface2);
+  color: var(--muted);
+  text-align: center;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.02);
   border-radius: var(--radius-sm);
 }
 
-/* Modal Footer */
 .modal-footer {
   display: flex;
   justify-content: flex-end;
@@ -374,7 +428,7 @@ onMounted(async () => {
 }
 
 .btn-done {
-  padding: 8px 22px;
+  padding: 7px 20px;
   background: transparent;
   border: 1px solid rgba(255, 255, 255, 0.35);
   border-radius: var(--radius-sm);
@@ -389,11 +443,14 @@ onMounted(async () => {
   border-color: #ffffff;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
+.spinner-sm {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 </style>

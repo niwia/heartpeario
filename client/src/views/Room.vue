@@ -264,7 +264,7 @@
           </div>
         </div>
 
-        <!-- Video Element with WebVTT Subtitle Track -->
+        <!-- Video Element -->
         <video
           v-show="room.url"
           ref="videoEl"
@@ -281,18 +281,7 @@
           @playing="onPlaying"
           @error="onVideoError"
           @dblclick.stop="toggleFullscreen"
-        >
-          <!-- Active Converted WebVTT Subtitle Track -->
-          <track
-            v-if="activeSubTrackBlobUrl"
-            key="active-vtt-track"
-            kind="subtitles"
-            :src="activeSubTrackBlobUrl"
-            :srclang="room.currentSubtitle?.lang || 'en'"
-            :label="room.currentSubtitle?.langName || room.currentSubtitle?.lang || 'Subtitles'"
-            default
-          />
-        </video>
+        ></video>
 
         <!-- ── Smart Subtitle Overlay (Adaptive Positioning for Widescreen & Fullscreen) ── -->
         <div
@@ -892,7 +881,7 @@ function toggleMute() {
 }
 
 function toggleFullscreen() {
-  const el = document.querySelector('.player-wrap');
+  const el = document.querySelector('.room') || document.documentElement;
   if (!el) return;
   if (document.fullscreenElement) {
     document.exitFullscreen().catch(() => {});
@@ -1713,22 +1702,22 @@ onMounted(async () => {
 .room-code-popover-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 120;
+  z-index: 2600;
 }
 .room-code-popover {
-  position: absolute;
-  top: 42px;
-  left: 0;
-  width: 260px;
+  position: fixed;
+  top: 56px;
+  left: 140px;
+  width: 270px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.9);
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  z-index: 121;
+  z-index: 2601;
   animation: slide-down 0.15s ease both;
 }
 .popover-header {
@@ -1884,19 +1873,19 @@ onMounted(async () => {
 .users-dropdown-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  z-index: 2600;
 }
 .users-dropdown {
-  position: absolute;
-  top: 58px;
+  position: fixed;
+  top: 56px;
   right: 56px;
   width: 290px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.9);
   overflow: hidden;
-  z-index: 101;
+  z-index: 2601;
   animation: slide-down 0.15s ease both;
 }
 .users-dropdown-header {
@@ -2392,15 +2381,17 @@ onMounted(async () => {
 /* ── 3-Second Synchronized Action Countdown ──────────────────────────────── */
 .countdown-bottom-indicator {
   position: absolute;
-  bottom: 54px;
-  left: 20px;
-  background: transparent !important;
-  border: none !important;
-  padding: 0 !important;
-  box-shadow: none !important;
+  bottom: 84px;
+  left: 24px;
+  background: rgba(12, 12, 18, 0.88) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  padding: 6px 14px !important;
+  border-radius: 6px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7) !important;
+  backdrop-filter: blur(10px);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   z-index: 25;
   pointer-events: auto;
   animation: fade-in 0.15s ease both;
@@ -2409,13 +2400,13 @@ onMounted(async () => {
   font-size: 0.88rem;
   font-weight: 600;
   color: #ffffff;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
   letter-spacing: 0.01em;
 }
 .btn-cancel-text {
   font-size: 0.82rem;
   font-weight: 700;
-  color: #aaaaaa;
+  color: #cccccc;
   background: none;
   border: none;
   text-decoration: underline;
@@ -2428,14 +2419,14 @@ onMounted(async () => {
 /* Media Title Top Overlay (Pure Text, No Box, No Border) */
 .media-title-overlay {
   position: absolute;
-  top: 18px; left: 20px;
+  top: 24px; left: 24px;
   background: transparent;
   border: none;
   padding: 0;
   display: flex;
   align-items: baseline;
   gap: 8px;
-  z-index: 20;
+  z-index: 12;
   pointer-events: none;
   text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95);
 }

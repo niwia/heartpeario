@@ -147,12 +147,32 @@
             <div class="streams-header">
               <h4>Available Streams</h4>
               <span v-if="loadingStreams" class="spinner sm"></span>
-              <span class="streams-count">{{ availableStreams.length }} stream(s) found</span>
+              <span class="streams-count">{{ filteredStreams.length }} of {{ availableStreams.length }} stream(s)</span>
             </div>
 
-            <div v-if="availableStreams.length" class="streams-list">
+            <!-- Addon Filter Tabs -->
+            <div v-if="availableAddonNames.length > 1" class="addon-filter-tabs">
+              <button
+                class="addon-filter-btn"
+                :class="{ active: selectedAddonFilter === 'all' }"
+                @click="selectedAddonFilter = 'all'"
+              >
+                All ({{ availableStreams.length }})
+              </button>
+              <button
+                v-for="addon in availableAddonNames"
+                :key="addon.name"
+                class="addon-filter-btn"
+                :class="{ active: selectedAddonFilter === addon.name }"
+                @click="selectedAddonFilter = addon.name"
+              >
+                {{ addon.name }} ({{ addon.count }})
+              </button>
+            </div>
+
+            <div v-if="filteredStreams.length" class="streams-list">
               <div
-                v-for="(st, idx) in availableStreams"
+                v-for="(st, idx) in filteredStreams"
                 :key="idx"
                 class="stream-card"
                 @click="chooseStream(st)"
@@ -216,11 +236,26 @@ const selectedEpisode = ref(null);
 const loadingStreams = ref(false);
 const availableStreams = ref([]);
 const availableSubtitles = ref([]);
+const selectedAddonFilter = ref('all');
 
 let searchDebounce = null;
 
 const currentResults = computed(() => {
   return activeTab.value === 'movies' ? searchResults.value.movies : searchResults.value.series;
+});
+
+const availableAddonNames = computed(() => {
+  const map = new Map();
+  availableStreams.value.forEach(s => {
+    const name = s.addonName || 'Addon';
+    map.set(name, (map.get(name) || 0) + 1);
+  });
+  return Array.from(map.entries()).map(([name, count]) => ({ name, count }));
+});
+
+const filteredStreams = computed(() => {
+  if (selectedAddonFilter.value === 'all') return availableStreams.value;
+  return availableStreams.value.filter(s => (s.addonName || 'Addon') === selectedAddonFilter.value);
 });
 
 const seasonsList = computed(() => {
@@ -271,6 +306,7 @@ async function selectItem(item) {
   fullMeta.value = null;
   availableStreams.value = [];
   availableSubtitles.value = [];
+  selectedAddonFilter.value = 'all';
 
   try {
     const meta = await getMeta(item.type, item.id);
@@ -300,6 +336,7 @@ async function loadStreamsForId(type, id) {
   loadingStreams.value = true;
   availableStreams.value = [];
   availableSubtitles.value = [];
+  selectedAddonFilter.value = 'all';
 
   try {
     await Promise.all([
@@ -328,14 +365,30 @@ function chooseStream(stream) {
     year: selectedItem.value.year || selectedItem.value.releaseInfo,
     poster: selectedItem.value.poster,
     episodeTitle: selectedEpisode.value ? `S${selectedSeason.value}E${selectedEpisode.value.episode} - ${selectedEpisode.value.name || ''}` : null,
+    episodeId: selectedEpisode.value ? selectedEpisode.value.id : null,
+    season: selectedEpisode.value ? selectedSeason.value : null,
+    episode: selectedEpisode.value ? selectedEpisode.value.episode : null,
     description: fullMeta.value?.description || selectedItem.value.description || '',
     genres: fullMeta.value?.genres || [],
   };
 
+  // Combine stream-provided subtitles (at the top!) with addon subtitles
+  let combinedSubtitles = [...availableSubtitles.value];
+  if (stream.subtitles && Array.isArray(stream.subtitles) && stream.subtitles.length > 0) {
+    const streamSubs = stream.subtitles.map((sub, idx) => ({
+      id: `stream-sub-${idx}`,
+      url: sub.url,
+      lang: sub.lang || sub.id || 'eng',
+      langName: `${sub.lang?.toUpperCase() || 'SUB'} (Stream Embedded)`,
+      isStreamSub: true,
+    }));
+    combinedSubtitles = [...streamSubs, ...combinedSubtitles];
+  }
+
   emit('selectStream', {
     url: streamUrl,
     mediaMeta,
-    subtitles: availableSubtitles.value,
+    subtitles: combinedSubtitles,
     sources: availableStreams.value,
   });
   emit('close');
@@ -749,6 +802,34 @@ onMounted(() => {
 .streams-count {
   font-size: 0.8rem;
   color: var(--muted);
+}
+
+.addon-filter-tabs {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.addon-filter-btn {
+  padding: 5px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.addon-filter-btn:hover {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.addon-filter-btn.active {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+  color: #ffffff;
 }
 
 .streams-list {
