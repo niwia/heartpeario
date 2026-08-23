@@ -328,12 +328,15 @@ function chooseStream(stream) {
     year: selectedItem.value.year || selectedItem.value.releaseInfo,
     poster: selectedItem.value.poster,
     episodeTitle: selectedEpisode.value ? `S${selectedSeason.value}E${selectedEpisode.value.episode} - ${selectedEpisode.value.name || ''}` : null,
+    description: fullMeta.value?.description || selectedItem.value.description || '',
+    genres: fullMeta.value?.genres || [],
   };
 
   emit('selectStream', {
     url: streamUrl,
     mediaMeta,
     subtitles: availableSubtitles.value,
+    sources: availableStreams.value,
   });
   emit('close');
 }

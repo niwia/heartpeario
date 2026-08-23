@@ -43,25 +43,6 @@
       </div>
     </div>
 
-    <!-- ── Rename Modal ─────────────────────────────────────────────── -->
-    <div v-if="showRenameModal" class="join-overlay" @click.self="showRenameModal = false">
-      <div class="join-card">
-        <h2>Change Your Display Name</h2>
-        <form class="join-form" @submit.prevent="saveNewName">
-          <input
-            v-model="renameInput"
-            type="text"
-            placeholder="Your name..."
-            maxlength="25"
-          />
-          <div class="rename-actions">
-            <button type="button" class="btn-cancel" @click="showRenameModal = false">Cancel</button>
-            <button type="submit" class="btn-join-room" :disabled="!renameInput.trim()">Save</button>
-          </div>
-        </form>
-      </div>
-    </div>
-
     <!-- ── Header ─────────────────────────────────────────────────── -->
     <header class="header">
       <div class="header-left">
@@ -69,26 +50,63 @@
           <span class="logo-text">HeartPeario</span>
         </router-link>
 
-        <div class="room-code-badge" @click="copyRoomLink" title="Click to copy invite link">
-          <span class="room-label">ROOM</span>
-          <span class="room-id">{{ room.roomId }}</span>
-          <Icon :name="copied ? 'check' : 'copy'" size="14" class="copy-icon" />
-          <span v-if="copied" class="copied-tooltip">Copied!</span>
+        <!-- Room Code Badge + Dropdown for Copy & Change Room -->
+        <div class="room-badge-container">
+          <div
+            class="room-code-badge"
+            @click="showRoomCodeMenu = !showRoomCodeMenu"
+            title="Room Options (Copy & Change Code)"
+          >
+            <span class="room-label">ROOM</span>
+            <span class="room-id">{{ room.roomId }}</span>
+            <Icon :name="copied ? 'check' : 'copy'" size="14" class="copy-icon" />
+          </div>
+
+          <!-- Room Code Popover Dropdown -->
+          <div v-if="showRoomCodeMenu" class="room-code-popover-backdrop" @click="showRoomCodeMenu = false">
+            <div class="room-code-popover" @click.stop>
+              <div class="popover-header">
+                <span class="popover-title">Room: {{ room.roomId }}</span>
+                <button class="popover-close-btn" @click="showRoomCodeMenu = false">
+                  <Icon name="close" size="12" />
+                </button>
+              </div>
+
+              <div class="popover-actions">
+                <button class="btn-popover-action" @click="copyRoomLink">
+                  <Icon :name="copied ? 'check' : 'link'" size="14" />
+                  <span>{{ copied ? 'Link Copied!' : 'Copy Invite Link' }}</span>
+                </button>
+                <button class="btn-popover-action" @click="copyRoomCode">
+                  <Icon :name="copiedCode ? 'check' : 'copy'" size="14" />
+                  <span>{{ copiedCode ? 'Code Copied!' : 'Copy Room Code' }}</span>
+                </button>
+              </div>
+
+              <div class="popover-divider"></div>
+
+              <form class="switch-room-form" @submit.prevent="switchRoomCode">
+                <label class="switch-room-label">Switch to another room</label>
+                <div class="switch-room-row">
+                  <input
+                    v-model="newRoomCodeInput"
+                    type="text"
+                    placeholder="Enter code (e.g. MOVIE)"
+                    maxlength="16"
+                    spellcheck="false"
+                  />
+                  <button type="submit" class="btn-switch-room" :disabled="!newRoomCodeInput.trim()">
+                    Go
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
         </div>
 
         <button class="header-btn" @click="showSearchModal = true" title="Search Movies & Shows with Stremio Addons">
           <Icon name="search" size="15" />
           <span>Search</span>
-        </button>
-
-        <button class="header-btn" @click="showAddonsModal = true" title="Manage Stremio Addons">
-          <Icon name="addons" size="15" />
-          <span>Addons</span>
-        </button>
-
-        <button class="header-btn" @click="toggleUrlBar" title="Paste Direct Stream URL">
-          <Icon name="link" size="15" />
-          <span>Direct URL</span>
         </button>
       </div>
 
@@ -99,13 +117,13 @@
           <span class="host-pill-name">{{ hostDisplayName }}</span>
         </div>
 
-        <!-- Viewers Count Pill (Click to open viewers list & host delegation) -->
+        <!-- Viewers Count Pill (Click to open viewers list & host delegation & profile) -->
         <div class="users-pill" @click="showUsersMenu = !showUsersMenu" title="View room members">
           <Icon name="user" size="14" />
           <span class="user-count">{{ room.users.length }} Viewers</span>
         </div>
 
-        <!-- Users Dropdown Menu / Host Delegation -->
+        <!-- Users Dropdown Menu / Host Delegation / Profile -->
         <div v-if="showUsersMenu" class="users-dropdown-backdrop" @click="showUsersMenu = false">
           <div class="users-dropdown" @click.stop>
             <div class="users-dropdown-header">
@@ -132,7 +150,15 @@
                 </div>
                 <div class="user-item-right">
                   <button
-                    v-if="room.isHost && u.id !== room.you?.id"
+                    v-if="u.id === room.you?.id"
+                    class="btn-edit-profile-mini"
+                    @click="openSettingsTab('profile')"
+                    title="Edit your profile"
+                  >
+                    Edit Profile
+                  </button>
+                  <button
+                    v-else-if="room.isHost"
                     class="btn-make-host"
                     @click="transferHost(u.id)"
                     title="Make this user Room Host"
@@ -145,28 +171,13 @@
           </div>
         </div>
 
-        <!-- Encrypted Profile & History Vault Button -->
+        <!-- Settings Button (Replaces Chat & separate Addons/DirectURL) -->
         <button
-          class="user-chip-btn profile-vault-btn"
-          @click="showProfileModal = true"
-          title="Encrypted Profile, Watch History & Buddies"
+          class="icon-btn settings-btn"
+          @click="showSettingsModal = true"
+          title="Settings (Addons, Direct URL, Profile)"
         >
-          <span class="user-color-dot" :style="{ background: profileStore.current.avatarColor }"></span>
-          <span class="user-chip-name">{{ profileStore.current.name }}</span>
-          <span class="vault-mini-tag">Vault</span>
-        </button>
-
-        <!-- Toggle Chat -->
-        <button
-          id="hp-toggle-chat"
-          class="icon-btn"
-          :class="{ active: chatOpen }"
-          @click="chatOpen = !chatOpen"
-          title="Toggle Chat"
-          :aria-pressed="chatOpen"
-        >
-          <Icon name="chat" size="16" />
-          <span v-if="unread > 0 && !chatOpen" class="badge">{{ unread }}</span>
+          <Icon name="settings" size="18" />
         </button>
       </div>
     </header>
@@ -234,7 +245,7 @@
             <!-- Ready to Play Call to Action -->
             <div v-else class="empty-cinema-prompt">
               <h2 class="ph-title">Ready to Play</h2>
-              <p class="ph-sub">Search for movies or shows from your addons, or paste a video URL.</p>
+              <p class="ph-sub">Search for movies or shows from your addons, or load a stream link.</p>
             </div>
 
             <!-- Quick Action Buttons -->
@@ -243,16 +254,16 @@
                 <Icon name="search" size="16" />
                 <span>Search Catalog</span>
               </button>
-              <button class="btn-ph-action btn-sub" @click="openUrlBar">
+              <button class="btn-ph-action btn-sub" @click="openSettingsTab('direct-url')">
                 <Icon name="link" size="16" />
-                <span>Paste Stream URL</span>
+                <span>Direct Stream URL</span>
               </button>
             </div>
 
           </div>
         </div>
 
-        <!-- Video Element -->
+        <!-- Video Element with WebVTT Subtitle Track -->
         <video
           v-show="room.url"
           ref="videoEl"
@@ -263,43 +274,46 @@
           @click="togglePlay"
           @timeupdate="onTimeUpdate"
           @durationchange="onDurationChange"
-          @loadedmetadata="updateAudioTracks"
+          @loadedmetadata="onLoadedMetadata"
           @waiting="onWaiting"
           @canplay="onCanPlay"
           @playing="onPlaying"
           @error="onVideoError"
           @dblclick.stop="toggleFullscreen"
         >
-          <template v-if="room.subtitles && room.subtitles.length">
-            <track
-              v-for="sub in room.subtitles"
-              :key="sub.id || sub.url || sub.lang"
-              kind="subtitles"
-              :src="sub.url"
-              :srclang="sub.lang || 'en'"
-              :label="sub.langName || sub.lang || 'Subtitles'"
-              :default="sub.lang === room.currentSubtitle?.lang"
-            />
-          </template>
+          <!-- Active Converted WebVTT Subtitle Track -->
           <track
-            v-else-if="activeSubTrackBlobUrl"
+            v-if="activeSubTrackBlobUrl"
+            key="active-vtt-track"
             kind="subtitles"
             :src="activeSubTrackBlobUrl"
             :srclang="room.currentSubtitle?.lang || 'en'"
-            :label="room.currentSubtitle?.lang || 'Subtitles'"
+            :label="room.currentSubtitle?.langName || room.currentSubtitle?.lang || 'Subtitles'"
             default
           />
         </video>
 
-        <!-- Big Center Play Button Overlay (when paused & stream loaded) -->
+        <!-- ── Netflix-Style Pause Screen Overlay ────────────────────── -->
         <div
           v-if="room.url && paused && !room.activeCountdown"
-          class="center-play-overlay"
+          class="netflix-pause-overlay"
           @click="togglePlay"
-          title="Click to Play"
+          title="Click anywhere to Play"
         >
-          <div class="center-play-btn">
-            <Icon name="play" size="36" />
+          <div class="netflix-pause-content">
+            <span class="pause-watching-label">You're watching</span>
+            <h1 class="pause-title">{{ room.mediaMeta?.title || 'Video Stream' }}</h1>
+            <div v-if="room.mediaMeta?.episodeTitle || room.mediaMeta?.year" class="pause-sub-row">
+              <span v-if="room.mediaMeta?.episodeTitle" class="pause-ep">{{ room.mediaMeta.episodeTitle }}</span>
+              <span v-if="room.mediaMeta?.year" class="pause-year">({{ room.mediaMeta.year }})</span>
+            </div>
+            <p v-if="room.mediaMeta?.description" class="pause-description">
+              {{ room.mediaMeta.description }}
+            </p>
+          </div>
+
+          <div class="pause-status-bottom-right">
+            <span class="pause-status-text">Paused</span>
           </div>
         </div>
 
@@ -308,7 +322,7 @@
           <div class="buf-spinner"></div>
         </div>
 
-        <!-- ── 3-Second Synchronized Countdown Status (Bottom Left Pure Text Line, No Background) ── -->
+        <!-- ── 3-Second Synchronized Countdown Status (Bottom Left Pure Text Line) ── -->
         <div v-if="room.activeCountdown && room.url" class="countdown-bottom-indicator">
           <span class="countdown-text">{{ countdownBottomText }}</span>
           <button
@@ -321,26 +335,7 @@
           </button>
         </div>
 
-        <!-- Direct URL Bar Overlay -->
-        <div v-if="showUrlBar" class="url-bar-wrap">
-          <form class="url-bar" @submit.prevent="setDirectUrl">
-            <input
-              ref="urlInputEl"
-              v-model="urlInput"
-              type="url"
-              placeholder="Paste direct video URL (MP4, MKV, WebM, HLS m3u8)..."
-              spellcheck="false"
-            />
-            <button type="submit" class="btn-load-url" :disabled="!urlInput.trim()">
-              Load Stream
-            </button>
-            <button type="button" class="btn-close-url" @click="showUrlBar = false">
-              <Icon name="close" size="16" />
-            </button>
-          </form>
-        </div>
-
-        <!-- Media Info Top Overlay -->
+        <!-- Clean Pure-Text Media Title Top Overlay (No Border/No Box) -->
         <div v-if="room.mediaMeta && !controlsHidden && room.url" class="media-title-overlay">
           <span class="m-title">{{ room.mediaMeta.title }}</span>
           <span v-if="room.mediaMeta.episodeTitle" class="m-ep">{{ room.mediaMeta.episodeTitle }}</span>
@@ -429,11 +424,20 @@
               </div>
 
               <div class="controls-right">
+                <!-- Sources Button (Left of Audio) -->
+                <button
+                  class="ctrl-btn"
+                  @click="showSourcesModal = true"
+                  title="Stream Sources & Quality"
+                >
+                  <Icon name="sources" size="18" />
+                </button>
+
                 <!-- Audio Tracks Button -->
                 <button
                   class="ctrl-btn"
                   @click="openAudioModal"
-                  title="Select Audio Track"
+                  title="Audio Tracks & Languages"
                 >
                   <Icon name="volume" size="18" />
                 </button>
@@ -447,7 +451,7 @@
                 >
                   <Icon name="subtitles" size="18" />
                   <span v-if="room.currentSubtitle" class="sub-label">
-                    {{ room.currentSubtitle.lang?.slice(0, 3).toUpperCase() }}
+                    {{ (room.currentSubtitle.lang || 'SUB').slice(0, 3).toUpperCase() }}
                   </span>
                 </button>
 
@@ -463,68 +467,6 @@
 
       </div>
 
-      <!-- ── Chat Sidebar ─────────────────────────────────────────── -->
-      <aside class="chat-sidebar" :class="{ open: chatOpen }">
-        <div class="chat-header">
-          <div class="chat-title">
-            <Icon name="chat" size="15" />
-            <span>Room Chat</span>
-          </div>
-          <button class="icon-btn sm" @click="chatOpen = false" title="Close Chat">
-            <Icon name="close" size="14" />
-          </button>
-        </div>
-
-        <!-- Message List -->
-        <div ref="messagesEl" class="chat-messages">
-          <div v-if="room.messages.length === 0" class="chat-empty">
-            <Icon name="chat" size="24" />
-            <p>Welcome! Messages and sync events appear here.</p>
-          </div>
-
-          <div
-            v-for="(msg, i) in room.messages"
-            :key="i"
-            class="chat-msg"
-            :class="{
-              'system-msg': msg.isSystem,
-              'self-msg': !msg.isSystem && msg.userId === room.you?.id,
-            }"
-          >
-            <!-- System message -->
-            <template v-if="msg.isSystem">
-              <span class="sys-time">[{{ fmtTimestamp(msg.ts) }}]</span>
-              <span class="sys-text">{{ msg.content }}</span>
-            </template>
-
-            <!-- User message -->
-            <template v-else>
-              <div class="msg-header">
-                <span class="msg-author" :style="{ color: msg.color }">
-                  {{ msg.name }}
-                  <span v-if="msg.userId === room.hostId" class="chat-host-tag">HOST</span>
-                </span>
-                <span class="msg-time">{{ fmtTimestamp(msg.ts) }}</span>
-              </div>
-              <div class="msg-body">{{ msg.content }}</div>
-            </template>
-          </div>
-        </div>
-
-        <!-- Chat input -->
-        <form class="chat-input-row" @submit.prevent="sendMessage">
-          <input
-            v-model="chatInput"
-            type="text"
-            placeholder="Type a message..."
-            maxlength="300"
-          />
-          <button type="submit" class="btn-send" :disabled="!chatInput.trim()">
-            <Icon name="send" size="15" />
-          </button>
-        </form>
-      </aside>
-
     </div>
 
     <!-- ── Toast ─────────────────────────────────────────────────────── -->
@@ -538,9 +480,20 @@
       @selectStream="onStreamSelected"
     />
 
-    <AddonManagerModal
-      v-if="showAddonsModal"
-      @close="showAddonsModal = false"
+    <SettingsModal
+      v-if="showSettingsModal"
+      :initial-tab="settingsInitialTab"
+      @close="showSettingsModal = false"
+      @load-direct-url="onLoadDirectUrl"
+    />
+
+    <SourcesModal
+      v-if="showSourcesModal"
+      :sources="cachedSources"
+      :current-url="room.url"
+      @close="showSourcesModal = false"
+      @select-source="onSelectSource"
+      @open-search="openSearchFromSources"
     />
 
     <AudioTracksModal
@@ -560,14 +513,6 @@
       @load-custom="onLoadCustomSubtitle"
     />
 
-    <ProfileModal
-      v-if="showProfileModal"
-      @close="showProfileModal = false"
-      @select-stream="onStreamSelected"
-      @selectStream="onStreamSelected"
-      @rename="openRenameModal"
-    />
-
   </div>
 </template>
 
@@ -581,30 +526,33 @@ import { srtToVtt, createVttUrlFromRemote } from '@/services/subtitle.service';
 
 import Icon from '@/components/Icon.vue';
 import SearchMediaModal from '@/components/SearchMediaModal.vue';
-import AddonManagerModal from '@/components/AddonManagerModal.vue';
-import SubtitlesModal from '@/components/SubtitlesModal.vue';
+import SettingsModal from '@/components/SettingsModal.vue';
+import SourcesModal from '@/components/SourcesModal.vue';
 import AudioTracksModal from '@/components/AudioTracksModal.vue';
-import ProfileModal from '@/components/ProfileModal.vue';
+import SubtitlesModal from '@/components/SubtitlesModal.vue';
 
 const route = useRoute();
 const router = useRouter();
 const room = useRoomStore();
 const profileStore = useProfileStore();
 
-// ── Modals ────────────────────────────────────────────────────────────────
+// ── Modals & Navigation State ─────────────────────────────────────────────
 const showSearchModal = ref(false);
-const showAddonsModal = ref(false);
-const showSubtitlesModal = ref(false);
+const showSettingsModal = ref(false);
+const settingsInitialTab = ref('addons');
+const showSourcesModal = ref(false);
 const showAudioModal = ref(false);
-const showProfileModal = ref(false);
+const showSubtitlesModal = ref(false);
 const showJoinPrompt = ref(false);
-const showRenameModal = ref(false);
 const showUsersMenu = ref(false);
+const showRoomCodeMenu = ref(false);
+
 const joinNameInput = ref('');
-const renameInput = ref('');
+const newRoomCodeInput = ref('');
 const joinNameInputEl = ref(null);
 
 const detectedAudioTracks = ref([]);
+const cachedSources = ref([]);
 
 const cleanRouteCode = computed(() => {
   return (route.params.roomId || '').replace(/[^A-Z0-9]/gi, '').toUpperCase();
@@ -641,6 +589,7 @@ function saveRecentStreamRecord({ url, mediaMeta, subtitles, progressSeconds, du
       year: mediaMeta?.year || '',
       poster: mediaMeta?.poster || '',
       episodeTitle: mediaMeta?.episodeTitle || null,
+      description: mediaMeta?.description || '',
       season: mediaMeta?.season || null,
       episode: mediaMeta?.episode || null,
       url,
@@ -691,13 +640,13 @@ function resumeRecentStream(item) {
       year: item.year,
       poster: item.poster,
       episodeTitle: item.episodeTitle,
+      description: item.description || '',
       season: item.season,
       episode: item.episode,
     },
     subtitles: item.subtitles || [],
   });
 
-  // If saved position is > 5s, seek to it
   if (item.progressSeconds > 5) {
     setTimeout(() => {
       if (room.isHost) {
@@ -711,27 +660,19 @@ function resumeRecentStream(item) {
 }
 
 // ── Player Refs ───────────────────────────────────────────────────────────
-const videoEl    = ref(null);
-const urlInputEl = ref(null);
-const messagesEl = ref(null);
-
-const paused      = ref(true);
+const videoEl = ref(null);
+const paused = ref(true);
 const currentTime = ref(0);
-const duration    = ref(0);
-const volume      = ref(1);
-const isMuted     = ref(false);
-const prevVolume  = ref(1);
-const buffering   = ref(false);
+const duration = ref(0);
+const volume = ref(1);
+const isMuted = ref(false);
+const prevVolume = ref(1);
+const buffering = ref(false);
 const isUserScrubbing = ref(false);
 
-const chatOpen   = ref(true);
-const unread     = ref(0);
-const chatInput  = ref('');
-const urlInput   = ref('');
-const showUrlBar = ref(false);
-
-const copied     = ref(false);
-const toast      = ref('');
+const copied = ref(false);
+const copiedCode = ref(false);
+const toast = ref('');
 const controlsHidden = ref(false);
 
 // ── 3-Second Action Countdown State ───────────────────────────────────────
@@ -859,6 +800,14 @@ function toggleFullscreen() {
   }
 }
 
+function onLoadedMetadata() {
+  if (videoEl.value) {
+    duration.value = videoEl.value.duration;
+    updateAudioTracks();
+    ensureSubtitlesShowing();
+  }
+}
+
 function updateAudioTracks() {
   const tracks = [];
   if (videoEl.value?.audioTracks) {
@@ -923,6 +872,7 @@ function onCanPlay() {
     videoEl.value.volume = isMuted.value ? 0 : volume.value;
     videoEl.value.muted = isMuted.value;
     updateAudioTracks();
+    ensureSubtitlesShowing();
   }
 }
 
@@ -967,7 +917,6 @@ function startCountdownTimer(countdownData) {
   if (countdownInterval) clearInterval(countdownInterval);
   room.activeCountdown = countdownData;
 
-  // Pre-seek buffer during countdown if seek or play
   if (videoEl.value && typeof countdownData.targetTime === 'number') {
     if (countdownData.action === 'SEEK' || (countdownData.action === 'PLAY' && paused.value)) {
       videoEl.value.currentTime = countdownData.targetTime;
@@ -987,19 +936,32 @@ function startCountdownTimer(countdownData) {
   countdownInterval = setInterval(updateRemaining, 100);
 }
 
-// ── Subtitle Management ───────────────────────────────────────────────────
+// ── Subtitle Management & WebVTT Track Activation ─────────────────────────
+function ensureSubtitlesShowing() {
+  nextTick(() => {
+    if (videoEl.value && videoEl.value.textTracks) {
+      for (let i = 0; i < videoEl.value.textTracks.length; i++) {
+        videoEl.value.textTracks[i].mode = room.currentSubtitle ? 'showing' : 'disabled';
+      }
+    }
+  });
+}
+
 async function loadCurrentSubtitle() {
   if (!room.currentSubtitle?.url) {
     if (activeSubTrackBlobUrl.value) {
       URL.revokeObjectURL(activeSubTrackBlobUrl.value);
       activeSubTrackBlobUrl.value = null;
     }
+    ensureSubtitlesShowing();
     return;
   }
+
   try {
-    const vttUrl = await createVttUrlFromRemote(room.currentSubtitle.url, room.subtitleOffsetMs || 0);
+    const vttUrl = await createVttUrlFromRemote(room.currentSubtitle.url, 0);
     if (activeSubTrackBlobUrl.value) URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = vttUrl;
+    ensureSubtitlesShowing();
   } catch (err) {
     logDebug('Failed to load subtitle:', err);
     doToast('Failed to load subtitle track');
@@ -1009,38 +971,36 @@ async function loadCurrentSubtitle() {
 function onSelectSubtitle(sub) {
   room.currentSubtitle = sub;
   loadCurrentSubtitle();
-  doToast(sub ? `Subtitles: ${sub.lang}` : 'Subtitles disabled');
-}
-
-function onSetSubtitleOffset(offsetMs) {
-  room.subtitleOffsetMs = offsetMs;
-  loadCurrentSubtitle();
+  doToast(sub ? `Subtitles: ${sub.langName || sub.lang}` : 'Subtitles disabled');
 }
 
 function onLoadCustomSubtitle({ name, content }) {
   try {
-    const vtt = srtToVtt(content, room.subtitleOffsetMs || 0);
-    const blob = new Blob([vtt], { type: 'text/vtt' });
+    const vtt = srtToVtt(content, 0);
+    const blob = new Blob([vtt], { type: 'text/vtt;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     if (activeSubTrackBlobUrl.value) URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = url;
-    room.currentSubtitle = { lang: name, url: 'custom' };
+    room.currentSubtitle = { lang: 'custom', langName: name, url: 'custom' };
     showSubtitlesModal.value = false;
+    ensureSubtitlesShowing();
     doToast(`Loaded custom subtitle: ${name}`);
   } catch (err) {
     doToast('Failed to parse subtitle file');
   }
 }
 
-// ── Stream / URL Management ───────────────────────────────────────────────
-function onStreamSelected({ url, mediaMeta, subtitles }) {
+// ── Stream / URL / Sources Management ─────────────────────────────────────
+function onStreamSelected({ url, mediaMeta, subtitles, sources }) {
   showSearchModal.value = false;
-  showProfileModal.value = false;
+  if (sources?.length) cachedSources.value = sources;
+
   room.url = url;
   room.mediaMeta = mediaMeta;
   room.subtitles = subtitles || [];
   room.currentSubtitle = null;
   lastAppliedSeq = 0;
+
   if (activeSubTrackBlobUrl.value) {
     URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = null;
@@ -1075,6 +1035,7 @@ function onStreamSelected({ url, mediaMeta, subtitles }) {
       episodeTitle: mediaMeta.episodeTitle,
       year: mediaMeta.year,
       poster: mediaMeta.poster,
+      description: mediaMeta.description || '',
       url,
       progressSeconds: 0,
       durationSeconds: 0,
@@ -1084,36 +1045,45 @@ function onStreamSelected({ url, mediaMeta, subtitles }) {
   doToast(`Loaded: ${mediaMeta?.title || 'Stream'}`);
 }
 
-function toggleUrlBar() {
-  showUrlBar.value = !showUrlBar.value;
-  if (showUrlBar.value) {
-    nextTick(() => urlInputEl.value?.focus());
-  }
+function onSelectSource(source) {
+  const streamUrl = source.url || source.externalUrl;
+  if (!streamUrl) return;
+
+  onStreamSelected({
+    url: streamUrl,
+    mediaMeta: room.mediaMeta,
+    subtitles: room.subtitles,
+    sources: cachedSources.value,
+  });
 }
 
-function openUrlBar() {
-  showUrlBar.value = true;
-  nextTick(() => urlInputEl.value?.focus());
+function openSearchFromSources() {
+  showSourcesModal.value = false;
+  showSearchModal.value = true;
 }
 
-function setDirectUrl() {
-  const url = urlInput.value.trim();
+function onLoadDirectUrl(url) {
   if (!url) return;
   room.url = url;
   room.mediaMeta = null;
   room.subtitles = [];
   room.currentSubtitle = null;
+  cachedSources.value = [{ url, name: 'Direct Stream', addonName: 'Custom URL' }];
   lastAppliedSeq = 0;
+
   if (activeSubTrackBlobUrl.value) {
     URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = null;
   }
+
   socket.send('player.url', { url, mediaMeta: null, subtitles: [] });
+
   nextTick(() => {
     if (videoEl.value) {
       videoEl.value.load();
     }
   });
+
   saveRecentStreamRecord({
     url,
     mediaMeta: { title: 'Direct Stream' },
@@ -1121,12 +1091,42 @@ function setDirectUrl() {
     progressSeconds: 0,
     durationSeconds: 0,
   });
-  urlInput.value = '';
-  showUrlBar.value = false;
+
   doToast('Loaded direct video stream');
 }
 
-// ── UI Helpers ────────────────────────────────────────────────────
+function openSettingsTab(tabName) {
+  settingsInitialTab.value = tabName;
+  showUsersMenu.value = false;
+  showSettingsModal.value = true;
+}
+
+// ── Room Code Navigation & Actions ────────────────────────────────────────
+function copyRoomLink() {
+  const url = window.location.href;
+  navigator.clipboard.writeText(url).then(() => {
+    copied.value = true;
+    setTimeout(() => { copied.value = false; }, 2500);
+  });
+}
+
+function copyRoomCode() {
+  if (!room.roomId) return;
+  navigator.clipboard.writeText(room.roomId).then(() => {
+    copiedCode.value = true;
+    setTimeout(() => { copiedCode.value = false; }, 2500);
+  });
+}
+
+function switchRoomCode() {
+  const code = newRoomCodeInput.value.trim().replace(/[^A-Z0-9]/gi, '').toUpperCase();
+  if (!code) return;
+  showRoomCodeMenu.value = false;
+  newRoomCodeInput.value = '';
+  router.push(`/${code}`);
+}
+
+// ── UI Helpers ────────────────────────────────────────────────────────────
 function showControls() {
   controlsHidden.value = false;
   scheduleHideControls();
@@ -1139,14 +1139,6 @@ function scheduleHideControls() {
       controlsHidden.value = true;
     }, 3500);
   }
-}
-
-function copyRoomLink() {
-  const url = window.location.href;
-  navigator.clipboard.writeText(url).then(() => {
-    copied.value = true;
-    setTimeout(() => { copied.value = false; }, 2500);
-  });
 }
 
 function doToast(msg, duration = 3000) {
@@ -1164,12 +1156,6 @@ function fmtTime(sec) {
   return h > 0 ? `${h}:${remM}:${s}` : `${m}:${s}`;
 }
 
-function fmtTimestamp(ts) {
-  if (!ts) return '';
-  const d = new Date(ts);
-  return d.toTimeString().split(' ')[0];
-}
-
 // ── Name Prompts ──────────────────────────────────────────────────────────
 function confirmJoinName() {
   const name = joinNameInput.value.trim() || profileStore.current.name || 'Friend';
@@ -1182,41 +1168,10 @@ function confirmJoinName() {
   socket.send('room.join', { roomId });
 }
 
-function openRenameModal() {
-  renameInput.value = room.you?.name || profileStore.current.name || '';
-  showRenameModal.value = true;
-}
-
-function saveNewName() {
-  const name = renameInput.value.trim();
-  if (!name) return;
-  profileStore.updateCurrentName(name);
-  localStorage.setItem('hp-username', name);
-  socket.send('user.name', { name });
-  showRenameModal.value = false;
-  doToast(`Name changed to ${name}`);
-}
-
-// ── Chat ──────────────────────────────────────────────────────────────────
-function sendMessage() {
-  const content = chatInput.value.trim();
-  if (!content) return;
-  socket.send('room.message', { content });
-  chatInput.value = '';
-}
-
-function scrollMessages() {
-  nextTick(() => {
-    if (messagesEl.value) {
-      messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
-    }
-  });
-}
-
 // ── Keyboard Shortcuts ────────────────────────────────────────────────────
 function onKeyDown(e) {
   if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-  if (showSearchModal.value || showAddonsModal.value || showSubtitlesModal.value || showAudioModal.value || showProfileModal.value || showJoinPrompt.value || showRenameModal.value || roomNotFound.value) return;
+  if (showSearchModal.value || showSettingsModal.value || showSourcesModal.value || showSubtitlesModal.value || showAudioModal.value || showJoinPrompt.value || roomNotFound.value) return;
 
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   if (e.code === 'KeyF') toggleFullscreen();
@@ -1227,18 +1182,6 @@ function onKeyDown(e) {
 }
 
 // ── Watchers ──────────────────────────────────────────────────────────────
-watch(() => room.messages.length, () => {
-  scrollMessages();
-  if (!chatOpen.value) unread.value++;
-});
-
-watch(chatOpen, (open) => {
-  if (open) {
-    unread.value = 0;
-    scrollMessages();
-  }
-});
-
 watch(volume, (v) => {
   if (videoEl.value) {
     videoEl.value.volume = isMuted.value ? 0 : v;
@@ -1246,11 +1189,12 @@ watch(volume, (v) => {
   }
 });
 
-watch(() => room.users, (users) => {
-  if (users && users.length > 0) {
-    profileStore.recordFriends(users, room.you?.id);
+watch(() => route.params.roomId, (newRoomId) => {
+  if (newRoomId) {
+    const clean = newRoomId.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    socket.send('room.join', { roomId: clean });
   }
-}, { deep: true });
+});
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────
 onMounted(async () => {
@@ -1332,7 +1276,6 @@ onMounted(async () => {
       paused.value = true;
       currentTime.value = 0;
       duration.value = 0;
-      showUrlBar.value = false;
       lastAppliedSeq = 0;
 
       nextTick(() => {
@@ -1359,6 +1302,7 @@ onMounted(async () => {
           episodeTitle: data.mediaMeta.episodeTitle,
           year: data.mediaMeta.year,
           poster: data.mediaMeta.poster,
+          description: data.mediaMeta.description || '',
           url: data.url,
           progressSeconds: 0,
           durationSeconds: 0,
@@ -1375,6 +1319,7 @@ onMounted(async () => {
           URL.revokeObjectURL(activeSubTrackBlobUrl.value);
           activeSubTrackBlobUrl.value = null;
         }
+        ensureSubtitlesShowing();
       }
     }),
 
@@ -1383,10 +1328,6 @@ onMounted(async () => {
       room.activeCountdown = null;
       room.player = data;
       applySync(data);
-    }),
-
-    socket.on('room.message', (msg) => {
-      room.addMessage(msg);
     }),
 
     socket.on('room.tsMap', ({ tsMap, hostId, paused: isRoomPaused }) => {
@@ -1488,16 +1429,8 @@ onMounted(async () => {
   justify-content: center;
   color: #fff;
 }
-.not-found-card h2 {
-  font-size: 1.4rem;
-  font-weight: 700;
-  color: #fff;
-}
-.nf-desc {
-  font-size: 0.88rem;
-  color: var(--muted);
-  line-height: 1.5;
-}
+.not-found-card h2 { font-size: 1.4rem; font-weight: 700; color: #fff; }
+.nf-desc { font-size: 0.88rem; color: var(--muted); line-height: 1.5; }
 .nf-desc code {
   background: var(--surface2);
   padding: 2px 6px;
@@ -1505,10 +1438,7 @@ onMounted(async () => {
   color: #fff;
   font-weight: 700;
 }
-.nf-actions {
-  margin-top: 8px;
-  width: 100%;
-}
+.nf-actions { margin-top: 8px; width: 100%; }
 .btn-return-home {
   display: block;
   width: 100%;
@@ -1522,12 +1452,9 @@ onMounted(async () => {
   text-align: center;
   transition: all 0.15s;
 }
-.btn-return-home:hover {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: #ffffff;
-}
+.btn-return-home:hover { background: rgba(255, 255, 255, 0.1); border-color: #ffffff; }
 
-/* ── Join / Rename Overlays ─────────────────────────────────────────────── */
+/* ── Join Prompt Overlay ─────────────────────────────────────────────────── */
 .join-overlay {
   position: fixed;
   inset: 0;
@@ -1565,12 +1492,7 @@ onMounted(async () => {
 }
 .join-card h2 { font-size: 1.25rem; font-weight: 700; color: #fff; }
 .join-sub { font-size: 0.82rem; color: var(--muted); margin-top: -6px; }
-
-.join-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
+.join-form { display: flex; flex-direction: column; gap: 12px; }
 .join-form input {
   width: 100%;
   background: var(--surface2);
@@ -1582,7 +1504,6 @@ onMounted(async () => {
   transition: border-color 0.15s;
 }
 .join-form input:focus { border-color: #ffffff; }
-
 .btn-join-room {
   padding: 10px 20px;
   background: transparent;
@@ -1594,26 +1515,7 @@ onMounted(async () => {
   cursor: pointer;
   transition: all 0.15s;
 }
-.btn-join-room:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: #ffffff;
-}
-
-.rename-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
-}
-.btn-cancel {
-  padding: 8px 16px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-size: 0.85rem;
-  color: var(--muted);
-  cursor: pointer;
-}
-.btn-cancel:hover { color: #fff; border-color: rgba(255, 255, 255, 0.35); }
+.btn-join-room:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); border-color: #ffffff; }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
 .header {
@@ -1644,10 +1546,12 @@ onMounted(async () => {
   color: #ffffff;
   letter-spacing: -0.01em;
 }
-.logo-text {
-  color: #ffffff;
-}
+.logo-text { color: #ffffff; }
 
+/* Room Badge & Popover */
+.room-badge-container {
+  position: relative;
+}
 .room-code-badge {
   display: flex;
   align-items: center;
@@ -1657,26 +1561,116 @@ onMounted(async () => {
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  position: relative;
   transition: border-color 0.15s;
 }
 .room-code-badge:hover { border-color: rgba(255, 255, 255, 0.4); }
 .room-label { font-size: 0.68rem; font-weight: 700; color: var(--muted); }
 .room-id { font-size: 0.82rem; font-weight: 700; color: #ffffff; letter-spacing: 0.05em; }
 .copy-icon { color: var(--muted); }
-.copied-tooltip {
+
+.room-code-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+}
+.room-code-popover {
   position: absolute;
-  top: 100%; left: 50%;
-  transform: translateX(-50%) translateY(6px);
-  background: var(--surface2);
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  color: #ffffff;
-  font-size: 0.72rem;
+  top: 42px;
+  left: 0;
+  width: 260px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 121;
+  animation: slide-down 0.15s ease both;
+}
+.popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.popover-title {
+  font-size: 0.8rem;
   font-weight: 700;
-  padding: 3px 8px;
-  border-radius: 4px;
-  white-space: nowrap;
-  pointer-events: none;
+  color: #ffffff;
+}
+.popover-close-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px;
+}
+.popover-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.btn-popover-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-popover-action:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+.popover-divider {
+  height: 1px;
+  background: var(--border);
+}
+.switch-room-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.switch-room-label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.switch-room-row {
+  display: flex;
+  gap: 6px;
+}
+.switch-room-row input {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  font-size: 0.78rem;
+  color: #ffffff;
+  text-transform: uppercase;
+}
+.switch-room-row input:focus { border-color: rgba(255, 255, 255, 0.4); }
+.btn-switch-room {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--radius-sm);
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-switch-room:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
 }
 
 .header-btn {
@@ -1753,8 +1747,8 @@ onMounted(async () => {
 .users-dropdown {
   position: absolute;
   top: 58px;
-  right: 180px;
-  width: 280px;
+  right: 56px;
+  width: 290px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1834,6 +1828,21 @@ onMounted(async () => {
   padding: 1px 4px;
   border-radius: 3px;
 }
+.btn-edit-profile-mini {
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-edit-profile-mini:hover {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: #ffffff;
+}
 .btn-make-host {
   padding: 3px 8px;
   background: transparent;
@@ -1850,44 +1859,8 @@ onMounted(async () => {
   border-color: #ffffff;
 }
 
-.user-chip-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  padding: 4px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #fff;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.user-chip-btn:hover { border-color: #ffffff; background: rgba(255, 255, 255, 0.08); }
-.user-color-dot { width: 8px; height: 8px; border-radius: 50%; }
-
-.vault-mini-tag {
-  font-size: 0.65rem;
-  font-weight: 700;
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  padding: 1px 5px;
-  border-radius: 4px;
-  letter-spacing: 0.03em;
-}
-
-.user-chip-name {
-  max-width: 100px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Toggle chat icon button */
+/* Settings Icon Button */
 .icon-btn {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1899,24 +1872,10 @@ onMounted(async () => {
   cursor: pointer;
   transition: all 0.15s;
 }
-.icon-btn:hover, .icon-btn.active {
+.icon-btn:hover {
   color: #fff;
   border-color: #ffffff;
   background: rgba(255, 255, 255, 0.08);
-}
-.badge {
-  position: absolute;
-  top: -4px; right: -4px;
-  background: #ffffff;
-  color: #000000;
-  font-size: 0.65rem;
-  font-weight: 700;
-  min-width: 16px; height: 16px;
-  border-radius: 999px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
 }
 
 /* ── Main Area ───────────────────────────────────────────────────────────── */
@@ -1946,37 +1905,85 @@ onMounted(async () => {
   cursor: pointer;
 }
 
-/* Center Big Play Button Overlay */
-.center-play-overlay {
+/* Subtitle Styling */
+.player-wrap video::cue {
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 1.15rem;
+  font-weight: 600;
+  background-color: rgba(0, 0, 0, 0.75);
+  border-radius: 4px;
+  padding: 2px 8px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+/* ── Netflix-Style Pause Screen Overlay ─────────────────────────────────── */
+.netflix-pause-overlay {
   position: absolute;
   inset: 0;
+  background: radial-gradient(circle at 25% 45%, rgba(10, 10, 16, 0.78) 0%, rgba(0, 0, 0, 0.9) 100%);
   display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.25);
-  cursor: pointer;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 48px;
   z-index: 15;
-  transition: background 0.2s;
+  cursor: pointer;
+  animation: fade-in 0.2s ease both;
 }
-.center-play-overlay:hover {
-  background: rgba(0, 0, 0, 0.4);
+.netflix-pause-content {
+  max-width: 580px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: auto;
+  margin-bottom: auto;
 }
-.center-play-btn {
-  width: 72px; height: 72px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  border: 2px solid rgba(255, 255, 255, 0.85);
+.pause-watching-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.pause-title {
+  font-size: 2.5rem;
+  font-weight: 800;
   color: #ffffff;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+}
+.pause-sub-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+}
+.pause-description {
+  font-size: 0.95rem;
+  color: rgba(255, 255, 255, 0.85);
+  line-height: 1.5;
+  margin-top: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+}
+.pause-status-bottom-right {
+  align-self: flex-end;
   display: flex;
   align-items: center;
-  justify-content: center;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-  transition: transform 0.15s, border-color 0.15s;
+  gap: 8px;
 }
-.center-play-overlay:hover .center-play-btn {
-  transform: scale(1.1);
-  border-color: #ffffff;
-  background: rgba(0, 0, 0, 0.75);
+.pause-status-text {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 /* ── Cinema Placeholder & Continue Watching ──────────────────────────────── */
@@ -2059,9 +2066,7 @@ onMounted(async () => {
   object-fit: cover;
   display: block;
 }
-.recent-poster-ph {
-  color: var(--muted);
-}
+.recent-poster-ph { color: var(--muted); }
 .btn-delete-recent {
   position: absolute;
   top: 4px; right: 4px;
@@ -2075,12 +2080,8 @@ onMounted(async () => {
   opacity: 0;
   transition: opacity 0.15s;
 }
-.recent-card:hover .btn-delete-recent {
-  opacity: 1;
-}
-.btn-delete-recent:hover {
-  background: rgba(255, 255, 255, 0.3);
-}
+.recent-card:hover .btn-delete-recent { opacity: 1; }
+.btn-delete-recent:hover { background: rgba(255, 255, 255, 0.3); }
 
 .card-progress-bar {
   position: absolute;
@@ -2088,10 +2089,7 @@ onMounted(async () => {
   height: 4px;
   background: rgba(0, 0, 0, 0.6);
 }
-.card-progress-fill {
-  height: 100%;
-  background: #ffffff;
-}
+.card-progress-fill { height: 100%; background: #ffffff; }
 
 .recent-info {
   display: flex;
@@ -2187,7 +2185,7 @@ onMounted(async () => {
   animation: spin 0.8s linear infinite;
 }
 
-/* ── 3-Second Synchronized Action Countdown (Bottom Left Pure Text Line, No Background) ── */
+/* ── 3-Second Synchronized Action Countdown ──────────────────────────────── */
 .countdown-bottom-indicator {
   position: absolute;
   bottom: 54px;
@@ -2221,81 +2219,25 @@ onMounted(async () => {
   margin-left: 2px;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.9);
 }
-.btn-cancel-text:hover {
-  color: #ffffff;
-}
+.btn-cancel-text:hover { color: #ffffff; }
 
-/* Media Title Top Overlay */
+/* Media Title Top Overlay (Pure Text, No Box, No Border) */
 .media-title-overlay {
   position: absolute;
-  top: 16px; left: 16px;
-  background: rgba(18, 18, 26, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: var(--radius-sm);
-  padding: 8px 14px;
+  top: 18px; left: 20px;
+  background: transparent;
+  border: none;
+  padding: 0;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
-  backdrop-filter: blur(12px);
   z-index: 20;
   pointer-events: none;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.95);
 }
-.m-title { font-size: 0.95rem; font-weight: 700; color: #ffffff; }
-.m-ep { font-size: 0.85rem; color: #ffffff; opacity: 0.85; }
-.m-year { font-size: 0.8rem; color: var(--muted); }
-
-/* Direct URL Bar Overlay */
-.url-bar-wrap {
-  position: absolute;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(600px, 90%);
-  z-index: 25;
-}
-.url-bar {
-  display: flex;
-  gap: 8px;
-  background: rgba(18, 18, 26, 0.95);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  padding: 8px;
-  backdrop-filter: blur(16px);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
-}
-.url-bar input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  padding: 6px 10px;
-  font-size: 0.88rem;
-  color: #ffffff;
-}
-.url-bar input:focus { outline: none; }
-.btn-load-url {
-  padding: 6px 16px;
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.4);
-  border-radius: var(--radius-sm);
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #ffffff;
-  flex-shrink: 0;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.btn-load-url:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: #ffffff;
-}
-.btn-close-url {
-  background: none;
-  border: none;
-  color: var(--muted);
-  padding: 6px;
-  cursor: pointer;
-}
-.btn-close-url:hover { color: #ffffff; }
+.m-title { font-size: 1.1rem; font-weight: 700; color: #ffffff; }
+.m-ep { font-size: 0.95rem; color: #ffffff; opacity: 0.85; font-weight: 600; }
+.m-year { font-size: 0.85rem; color: #cccccc; font-weight: 500; }
 
 /* ── Player Controls ─────────────────────────────────────────────────────── */
 .controls {
@@ -2329,12 +2271,8 @@ onMounted(async () => {
   align-items: center;
   transition: height 0.15s;
 }
-.scrub-bar-wrap:hover {
-  height: 8px;
-}
-.scrub-bar-wrap.readonly-scrub {
-  cursor: default;
-}
+.scrub-bar-wrap:hover { height: 8px; }
+.scrub-bar-wrap.readonly-scrub { cursor: default; }
 .scrub-progress {
   position: absolute;
   left: 0; top: 0; bottom: 0;
@@ -2351,9 +2289,7 @@ onMounted(async () => {
   cursor: pointer;
   margin: 0;
 }
-.readonly-scrub .scrub-bar {
-  pointer-events: none;
-}
+.readonly-scrub .scrub-bar { pointer-events: none; }
 
 /* Controls Buttons Row */
 .controls-row {
@@ -2387,9 +2323,7 @@ onMounted(async () => {
   opacity: 1;
   transform: scale(1.08);
 }
-.ctrl-btn.active {
-  opacity: 1;
-}
+.ctrl-btn.active { opacity: 1; }
 .sub-label {
   position: absolute;
   bottom: 0px;
@@ -2428,137 +2362,6 @@ onMounted(async () => {
 .time-sep { margin: 0 4px; color: rgba(255, 255, 255, 0.4); }
 .time-dur { color: rgba(255, 255, 255, 0.6); }
 
-/* ── Chat Sidebar ────────────────────────────────────────────────────────── */
-.chat-sidebar {
-  width: 300px;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  transition: margin-right 0.2s ease;
-}
-.chat-sidebar:not(.open) {
-  display: none;
-}
-.chat-header {
-  height: 48px;
-  padding: 0 14px;
-  border-bottom: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.chat-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.88rem;
-  font-weight: 700;
-  color: #ffffff;
-}
-.icon-btn.sm {
-  width: 26px; height: 26px;
-}
-.chat-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.chat-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: var(--muted);
-  text-align: center;
-  gap: 8px;
-  font-size: 0.82rem;
-}
-.chat-msg {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.system-msg {
-  font-size: 0.75rem;
-  color: var(--muted);
-  background: var(--surface2);
-  padding: 6px 10px;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border-left: 2px solid rgba(255, 255, 255, 0.4);
-}
-.sys-time { color: var(--border-light); }
-.msg-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.msg-author {
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-.chat-host-tag {
-  font-size: 0.58rem;
-  font-weight: 800;
-  background: rgba(255, 255, 255, 0.15);
-  color: #ffffff;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  padding: 1px 3px;
-  border-radius: 2px;
-  margin-left: 4px;
-}
-.msg-time {
-  font-size: 0.68rem;
-  color: var(--muted);
-}
-.msg-body {
-  font-size: 0.85rem;
-  color: var(--text);
-  line-height: 1.4;
-  word-break: break-word;
-}
-.chat-input-row {
-  padding: 10px;
-  border-top: 1px solid var(--border);
-  display: flex;
-  gap: 8px;
-}
-.chat-input-row input {
-  flex: 1;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
-  font-size: 0.85rem;
-  color: var(--text);
-}
-.chat-input-row input:focus { border-color: rgba(255, 255, 255, 0.4); }
-.btn-send {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px; height: 36px;
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.35);
-  border-radius: var(--radius-sm);
-  color: #ffffff;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.btn-send:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.1);
-  border-color: #ffffff;
-}
-.btn-send:disabled { opacity: 0.35; cursor: not-allowed; }
-
 /* ── Toast ───────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed;
@@ -2578,19 +2381,8 @@ onMounted(async () => {
   animation: slide-up 0.2s ease both;
 }
 
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes slide-down {
-  from { opacity: 0; transform: translateY(-8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes slide-up {
-  from { opacity: 0; transform: translate(-50%, 12px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes slide-down { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes slide-up { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes spin { to { transform: rotate(360deg); } }
 </style>

@@ -1,0 +1,317 @@
+<template>
+  <div class="modal-backdrop" @click.self="$emit('close')">
+    <div class="modal-card">
+
+      <!-- Header -->
+      <div class="modal-header">
+        <div class="header-title">
+          <Icon name="sources" size="18" />
+          <h2>Stream Sources</h2>
+          <span v-if="sources.length" class="count-badge">{{ sources.length }}</span>
+        </div>
+        <button class="close-btn" @click="$emit('close')" title="Close">
+          <Icon name="close" size="18" />
+        </button>
+      </div>
+
+      <!-- Body: List of Sources -->
+      <div class="modal-body">
+        <div v-if="sources.length === 0" class="empty-sources">
+          <Icon name="sources" size="32" class="empty-icon" />
+          <p class="empty-title">No cached sources available</p>
+          <p class="empty-sub">Search for this title in the catalog to query stream addons.</p>
+          <button class="btn-search-catalog" @click="$emit('open-search')">
+            <Icon name="search" size="15" />
+            <span>Search Catalog</span>
+          </button>
+        </div>
+
+        <div v-else class="sources-list">
+          <div
+            v-for="(s, idx) in sources"
+            :key="s.url || idx"
+            class="source-card"
+            :class="{ active: currentUrl === s.url }"
+            @click="selectSource(s)"
+          >
+            <div class="source-left">
+              <div class="addon-badge">{{ s.addonName || 'Addon' }}</div>
+              <div class="source-meta">
+                <span class="source-name">{{ s.name || s.title || 'Stream ' + (idx + 1) }}</span>
+                <span v-if="s.details" class="source-details">{{ s.details }}</span>
+              </div>
+            </div>
+
+            <div class="source-right">
+              <span v-if="currentUrl === s.url" class="playing-badge">PLAYING</span>
+              <button v-else class="btn-switch-source">
+                Select
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer -->
+      <div class="modal-footer">
+        <button class="btn-done" @click="$emit('close')">Done</button>
+      </div>
+
+    </div>
+  </div>
+</template>
+
+<script setup>
+import Icon from '@/components/Icon.vue';
+
+const props = defineProps({
+  sources: {
+    type: Array,
+    default: () => [],
+  },
+  currentUrl: {
+    type: String,
+    default: '',
+  },
+});
+
+const emit = defineEmits(['close', 'select-source', 'open-search']);
+
+function selectSource(source) {
+  emit('select-source', source);
+  emit('close');
+}
+</script>
+
+<style scoped>
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  z-index: 1000;
+  animation: fade-in 0.2s ease both;
+}
+
+.modal-card {
+  width: min(520px, 100%);
+  max-height: 80vh;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.header-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.header-title h2 {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #ffffff;
+}
+.count-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #ffffff;
+}
+
+.close-btn {
+  width: 32px; height: 32px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.close-btn:hover {
+  color: #ffffff;
+  background: var(--surface2);
+  border-color: var(--border-light);
+}
+
+.modal-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.empty-sources {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 36px 16px;
+  gap: 8px;
+}
+.empty-icon { color: var(--muted); margin-bottom: 4px; }
+.empty-title { font-size: 0.95rem; font-weight: 600; color: #ffffff; }
+.empty-sub { font-size: 0.8rem; color: var(--muted); max-width: 300px; }
+
+.btn-search-catalog {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--radius-sm);
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-search-catalog:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+}
+
+.sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.source-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s;
+  gap: 12px;
+}
+.source-card:hover {
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.06);
+}
+.source-card.active {
+  border-color: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.source-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+}
+.addon-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.source-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+.source-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #ffffff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-details {
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-right {
+  flex-shrink: 0;
+}
+.playing-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  color: #3dbe7a;
+  background: rgba(61, 190, 122, 0.15);
+  border: 1px solid rgba(61, 190, 122, 0.3);
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.04em;
+}
+.btn-switch-source {
+  padding: 5px 12px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-sm);
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-switch-source:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.btn-done {
+  padding: 8px 22px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: var(--radius-sm);
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-done:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
+}
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+</style>
