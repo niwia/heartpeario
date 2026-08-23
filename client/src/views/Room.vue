@@ -52,55 +52,54 @@
 
         <!-- Room Code Badge + Dropdown for Copy & Change Room -->
         <div class="room-badge-container">
-          <div
+          <button
+            type="button"
             class="room-code-badge"
-            @click="showRoomCodeMenu = !showRoomCodeMenu"
+            @click.stop="toggleRoomCodeMenu"
             title="Room Options (Copy & Change Code)"
           >
             <span class="room-label">ROOM</span>
             <span class="room-id">{{ room.roomId }}</span>
             <Icon :name="copied ? 'check' : 'copy'" size="14" class="copy-icon" />
-          </div>
+          </button>
 
           <!-- Room Code Popover Dropdown -->
-          <div v-if="showRoomCodeMenu" class="room-code-popover-backdrop" @click="showRoomCodeMenu = false">
-            <div class="room-code-popover" @click.stop>
-              <div class="popover-header">
-                <span class="popover-title">Room: {{ room.roomId }}</span>
-                <button class="popover-close-btn" @click="showRoomCodeMenu = false">
-                  <Icon name="close" size="12" />
-                </button>
-              </div>
-
-              <div class="popover-actions">
-                <button class="btn-popover-action" @click="copyRoomLink">
-                  <Icon :name="copied ? 'check' : 'link'" size="14" />
-                  <span>{{ copied ? 'Link Copied!' : 'Copy Invite Link' }}</span>
-                </button>
-                <button class="btn-popover-action" @click="copyRoomCode">
-                  <Icon :name="copiedCode ? 'check' : 'copy'" size="14" />
-                  <span>{{ copiedCode ? 'Code Copied!' : 'Copy Room Code' }}</span>
-                </button>
-              </div>
-
-              <div class="popover-divider"></div>
-
-              <form class="switch-room-form" @submit.prevent="switchRoomCode">
-                <label class="switch-room-label">Switch to another room</label>
-                <div class="switch-room-row">
-                  <input
-                    v-model="newRoomCodeInput"
-                    type="text"
-                    placeholder="Enter code (e.g. MOVIE)"
-                    maxlength="16"
-                    spellcheck="false"
-                  />
-                  <button type="submit" class="btn-switch-room" :disabled="!newRoomCodeInput.trim()">
-                    Go
-                  </button>
-                </div>
-              </form>
+          <div v-if="showRoomCodeMenu" class="room-code-popover" @click.stop>
+            <div class="popover-header">
+              <span class="popover-title">Room: {{ room.roomId }}</span>
+              <button class="popover-close-btn" @click="showRoomCodeMenu = false">
+                <Icon name="close" size="12" />
+              </button>
             </div>
+
+            <div class="popover-actions">
+              <button class="btn-popover-action" @click="copyRoomLink">
+                <Icon :name="copied ? 'check' : 'link'" size="14" />
+                <span>{{ copied ? 'Link Copied!' : 'Copy Invite Link' }}</span>
+              </button>
+              <button class="btn-popover-action" @click="copyRoomCode">
+                <Icon :name="copiedCode ? 'check' : 'copy'" size="14" />
+                <span>{{ copiedCode ? 'Code Copied!' : 'Copy Room Code' }}</span>
+              </button>
+            </div>
+
+            <div class="popover-divider"></div>
+
+            <form class="switch-room-form" @submit.prevent="switchRoomCode">
+              <label class="switch-room-label">Switch to another room</label>
+              <div class="switch-room-row">
+                <input
+                  v-model="newRoomCodeInput"
+                  type="text"
+                  placeholder="Enter code (e.g. MOVIE)"
+                  maxlength="16"
+                  spellcheck="false"
+                />
+                <button type="submit" class="btn-switch-room" :disabled="!newRoomCodeInput.trim()">
+                  Go
+                </button>
+              </div>
+            </form>
           </div>
         </div>
 
@@ -118,14 +117,19 @@
         </div>
 
         <!-- Viewers Count Pill (Click to open viewers list & host delegation & profile) -->
-        <div class="users-pill" @click="showUsersMenu = !showUsersMenu" title="View room members">
-          <Icon name="user" size="14" />
-          <span class="user-count">{{ room.users.length }} Viewers</span>
-        </div>
+        <div class="users-pill-container">
+          <button
+            type="button"
+            class="users-pill"
+            @click.stop="toggleUsersMenu"
+            title="View room members"
+          >
+            <Icon name="user" size="14" />
+            <span class="user-count">{{ room.users.length }} Viewers</span>
+          </button>
 
-        <!-- Users Dropdown Menu / Host Delegation / Profile -->
-        <div v-if="showUsersMenu" class="users-dropdown-backdrop" @click="showUsersMenu = false">
-          <div class="users-dropdown" @click.stop>
+          <!-- Users Dropdown Menu / Host Delegation / Profile -->
+          <div v-if="showUsersMenu" class="users-dropdown" @click.stop>
             <div class="users-dropdown-header">
               <span>Room Viewers ({{ room.users.length }})</span>
               <button class="close-drop-btn" @click="showUsersMenu = false">
@@ -881,13 +885,28 @@ function toggleMute() {
 }
 
 function toggleFullscreen() {
-  const el = document.querySelector('.room') || document.documentElement;
+  const el = playerWrapEl.value || document.querySelector('.player-wrap');
   if (!el) return;
   if (document.fullscreenElement) {
     document.exitFullscreen().catch(() => {});
   } else {
     el.requestFullscreen().catch(() => {});
   }
+}
+
+function toggleRoomCodeMenu() {
+  showRoomCodeMenu.value = !showRoomCodeMenu.value;
+  if (showRoomCodeMenu.value) showUsersMenu.value = false;
+}
+
+function toggleUsersMenu() {
+  showUsersMenu.value = !showUsersMenu.value;
+  if (showUsersMenu.value) showRoomCodeMenu.value = false;
+}
+
+function closeAllMenus() {
+  showRoomCodeMenu.value = false;
+  showUsersMenu.value = false;
 }
 
 function onLoadedMetadata() {
@@ -1316,6 +1335,7 @@ onMounted(async () => {
   joinNameInput.value = savedName || '';
 
   document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('click', closeAllMenus);
 
   if (savedName) socket.send('user.name', { name: savedName });
   socket.onReconnect = () => socket.send('room.join', { roomId });
@@ -1500,6 +1520,7 @@ onMounted(async () => {
   onUnmounted(() => {
     offs.forEach(off => off());
     document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('click', closeAllMenus);
     if (countdownInterval) clearInterval(countdownInterval);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
     clearTimeout(hideTimer);
@@ -1658,7 +1679,9 @@ onMounted(async () => {
   justify-content: space-between;
   padding: 0 16px;
   flex-shrink: 0;
-  z-index: 10;
+  z-index: 100;
+  position: relative;
+  overflow: visible;
   gap: 12px;
 }
 
@@ -1699,15 +1722,10 @@ onMounted(async () => {
 .room-id { font-size: 0.82rem; font-weight: 700; color: #ffffff; letter-spacing: 0.05em; }
 .copy-icon { color: var(--muted); }
 
-.room-code-popover-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 2600;
-}
 .room-code-popover {
-  position: fixed;
-  top: 56px;
-  left: 140px;
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
   width: 270px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -1717,7 +1735,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  z-index: 2601;
+  z-index: 1100;
   animation: slide-down 0.15s ease both;
 }
 .popover-header {
@@ -1852,6 +1870,10 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
+.users-pill-container {
+  position: relative;
+}
+
 .users-pill {
   display: flex;
   align-items: center;
@@ -1870,22 +1892,17 @@ onMounted(async () => {
 .user-count { font-weight: 600; color: #fff; }
 
 /* Users Dropdown Menu */
-.users-dropdown-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 2600;
-}
 .users-dropdown {
-  position: fixed;
-  top: 56px;
-  right: 56px;
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
   width: 290px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.9);
   overflow: hidden;
-  z-index: 2601;
+  z-index: 1100;
   animation: slide-down 0.15s ease both;
 }
 .users-dropdown-header {
