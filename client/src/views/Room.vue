@@ -986,7 +986,14 @@ function onCanPlay() {
 }
 
 function onVideoError() {
-  doToast('Could not load stream - check URL or provider');
+  const err = videoEl.value?.error;
+  let reason = 'Stream link is dead or unavailable from provider';
+  if (err?.code === 4) { // MEDIA_ERR_SRC_NOT_SUPPORTED
+    reason = 'Provider link returned 404/Dead. Please select another source.';
+  } else if (err?.code === 2) { // MEDIA_ERR_NETWORK
+    reason = 'Network connection failed while reaching provider.';
+  }
+  doToast(`Could not load stream: ${reason}`, 5000);
   buffering.value = false;
 }
 
