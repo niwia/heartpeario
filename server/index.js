@@ -63,13 +63,8 @@ const rooms = new Map();
 const testRoom = {
   id: 'TEST',
   hostId: null,
-  url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-  mediaMeta: {
-    title: 'Big Buck Bunny (Test Stream)',
-    type: 'movie',
-    year: '2026',
-    poster: 'https://upload.wikimedia.org/wikipedia/commons/c/c5/Big_buck_bunny_poster_big.jpg',
-  },
+  url: null,
+  mediaMeta: null,
   subtitles: [],
   player: { paused: true, time: 0, serverTime: Date.now() },
   clients: new Map(),
@@ -320,14 +315,15 @@ wss.on('connection', (ws, req) => {
         }
 
         room = target;
-        if (!room.hostId || room.clients.size === 0) {
+        const hostIsConnected = Array.from(room.clients.values()).some(u => u.id === room.hostId);
+        if (!room.hostId || !hostIsConnected || room.clients.size === 0) {
           room.hostId = userId;
         }
         room.clients.set(ws, user);
         if (!room.tsMap) room.tsMap = new Map();
         room.tsMap.set(userId, { time: room.player?.time || 0, buffering: false, ready: true, updatedAt: Date.now() });
         const isHost = room.hostId === userId;
-        logServer(`[Room ${id}] ${user.name} joined. Total users: ${room.clients.size} (Host: ${room.hostId})`);
+        logServer(`[Room ${id}] ${user.name} joined. Total users: ${room.clients.size} (Host: ${room.hostId} - isHost: ${isHost})`);
 
         send(ws, 'room.joined', {
           roomId: id,

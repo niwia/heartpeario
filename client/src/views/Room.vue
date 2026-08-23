@@ -77,7 +77,7 @@
           <span v-if="copied" class="copied-tooltip">Copied!</span>
         </div>
 
-        <button v-if="room.isHost" class="header-btn" @click="showSearchModal = true" title="Search Movies & Shows with Stremio Addons">
+        <button class="header-btn" @click="showSearchModal = true" title="Search Movies & Shows with Stremio Addons">
           <Icon name="search" size="15" />
           <span>Search</span>
         </button>
@@ -87,7 +87,7 @@
           <span>Addons</span>
         </button>
 
-        <button v-if="room.isHost" class="header-btn" @click="toggleUrlBar" title="Paste Direct Stream URL">
+        <button class="header-btn" @click="toggleUrlBar" title="Paste Direct Stream URL">
           <Icon name="link" size="15" />
           <span>Direct URL</span>
         </button>
@@ -192,21 +192,20 @@
         class="player-wrap"
         @mousemove="showControls"
         @mouseleave="scheduleHideControls"
-        @click.self="togglePlay"
         :class="{ 'controls-hidden': controlsHidden && !paused && !!room.url && !room.activeCountdown }"
       >
 
-        <!-- Placeholder when no URL -->
+        <!-- Static Placeholder when no URL is loaded -->
         <div v-if="!room.url" class="placeholder">
           <div class="placeholder-inner">
             <div class="ph-icon-wrap">
-              <Icon name="play" size="42" />
+              <Icon name="play" size="48" />
             </div>
-            <p class="ph-title">No stream playing</p>
+            <h2 class="ph-title">Ready to Play</h2>
             <p class="ph-sub">
-              {{ room.isHost ? 'Search for a movie or TV show with Stremio addons, or paste a direct video link.' : 'Waiting for the host to select a stream...' }}
+              Search for movies or shows with Stremio addons, or paste a direct video stream link to watch in sync.
             </p>
-            <div v-if="room.isHost" class="placeholder-actions">
+            <div class="placeholder-actions">
               <button class="btn-ph-search" @click="showSearchModal = true">
                 <Icon name="search" size="16" />
                 <span>Search Catalog</span>
@@ -219,23 +218,20 @@
           </div>
         </div>
 
-        <!-- Buffering overlay -->
-        <div v-if="room.url && buffering && !paused && !room.activeCountdown" class="buffering-overlay" aria-label="Buffering">
-          <div class="buf-spinner"></div>
-        </div>
-
-        <!-- Video element -->
+        <!-- Video Element -->
         <video
           v-show="room.url"
           ref="videoEl"
           :src="room.url || undefined"
-          preload="metadata"
+          preload="auto"
           playsinline
           crossorigin="anonymous"
+          @click="togglePlay"
           @timeupdate="onTimeUpdate"
           @durationchange="onDurationChange"
           @waiting="onWaiting"
           @canplay="onCanPlay"
+          @playing="onPlaying"
           @error="onVideoError"
           @dblclick.stop="toggleFullscreen"
         >
@@ -260,6 +256,23 @@
           />
         </video>
 
+        <!-- Big Center Play Button Overlay (when paused & stream loaded) -->
+        <div
+          v-if="room.url && paused && !room.activeCountdown"
+          class="center-play-overlay"
+          @click="togglePlay"
+          title="Click to Play"
+        >
+          <div class="center-play-btn">
+            <Icon name="play" size="38" />
+          </div>
+        </div>
+
+        <!-- Buffering spinner overlay -->
+        <div v-if="room.url && buffering && !paused && !room.activeCountdown" class="buffering-overlay" aria-label="Buffering">
+          <div class="buf-spinner"></div>
+        </div>
+
         <!-- ── 3-Second Synchronized Action Countdown Overlay ──────────────── -->
         <div v-if="room.activeCountdown && room.url" class="countdown-overlay">
           <div class="countdown-card">
@@ -281,8 +294,8 @@
           </div>
         </div>
 
-        <!-- Direct URL bar -->
-        <div v-if="showUrlBar && room.isHost" class="url-bar-wrap">
+        <!-- Direct URL Bar Overlay -->
+        <div v-if="showUrlBar" class="url-bar-wrap">
           <form class="url-bar" @submit.prevent="setDirectUrl">
             <input
               ref="urlInputEl"
@@ -292,7 +305,7 @@
               spellcheck="false"
             />
             <button type="submit" class="btn-load-url" :disabled="!urlInput.trim()">
-              Load for Room
+              Load Stream
             </button>
             <button type="button" class="btn-close-url" @click="showUrlBar = false">
               <Icon name="close" size="16" />
@@ -300,18 +313,18 @@
           </form>
         </div>
 
-        <!-- Media Info Top Overlay (shown on hover) -->
+        <!-- Media Info Top Overlay -->
         <div v-if="room.mediaMeta && !controlsHidden && room.url" class="media-title-overlay">
           <span class="m-title">{{ room.mediaMeta.title }}</span>
           <span v-if="room.mediaMeta.episodeTitle" class="m-ep">{{ room.mediaMeta.episodeTitle }}</span>
           <span v-if="room.mediaMeta.year" class="m-year">({{ room.mediaMeta.year }})</span>
         </div>
 
-        <!-- Controls overlay -->
+        <!-- ── Controls Overlay ──────────────────────────────────────── -->
         <div class="controls" v-if="room.url">
           <div class="controls-inner">
 
-            <!-- Progress bar -->
+            <!-- Progress Bar / Scrub Bar -->
             <div class="scrub-bar-wrap" :class="{ 'readonly-scrub': !room.isHost }">
               <input
                 type="range"
@@ -332,16 +345,16 @@
               ></div>
             </div>
 
-            <!-- Buttons row -->
+            <!-- Buttons Row -->
             <div class="controls-row">
               <div class="controls-left">
                 <!-- Play / Pause Button -->
                 <button
-                  class="ctrl-btn"
+                  class="ctrl-btn main-play-btn"
                   @click="togglePlay"
                   :title="playPauseButtonTitle"
                 >
-                  <Icon :name="paused ? 'play' : 'pause'" size="20" />
+                  <Icon :name="paused ? 'play' : 'pause'" size="22" />
                 </button>
 
                 <!-- Backward 10s (Host Only) -->
@@ -382,9 +395,9 @@
 
                 <!-- Time display -->
                 <div class="time-display">
-                  <span>{{ fmtTime(currentTime) }}</span>
+                  <span class="time-cur">{{ fmtTime(currentTime) }}</span>
                   <span class="time-sep">/</span>
-                  <span>{{ fmtTime(duration) }}</span>
+                  <span class="time-dur">{{ fmtTime(duration) }}</span>
                 </div>
               </div>
 
@@ -402,7 +415,7 @@
                   </span>
                 </button>
 
-                <!-- Fullscreen -->
+                <!-- Fullscreen Button -->
                 <button class="ctrl-btn" @click="toggleFullscreen" title="Fullscreen (F)">
                   <Icon name="fullscreen" size="18" />
                 </button>
@@ -726,6 +739,11 @@ function onWaiting() {
   if (!paused.value) buffering.value = true;
 }
 
+function onPlaying() {
+  buffering.value = false;
+  paused.value = false;
+}
+
 function onCanPlay() {
   buffering.value = false;
   if (videoEl.value) {
@@ -841,7 +859,6 @@ function onLoadCustomSubtitle({ name, content }) {
 
 // ── Stream / URL Management ───────────────────────────────────────────────
 function onStreamSelected({ url, mediaMeta, subtitles }) {
-  if (!room.isHost) return;
   room.url = url;
   room.mediaMeta = mediaMeta;
   room.subtitles = subtitles || [];
@@ -877,7 +894,6 @@ function onStreamSelected({ url, mediaMeta, subtitles }) {
 }
 
 function toggleUrlBar() {
-  if (!room.isHost) return;
   showUrlBar.value = !showUrlBar.value;
   if (showUrlBar.value) {
     nextTick(() => urlInputEl.value?.focus());
@@ -885,13 +901,11 @@ function toggleUrlBar() {
 }
 
 function openUrlBar() {
-  if (!room.isHost) return;
   showUrlBar.value = true;
   nextTick(() => urlInputEl.value?.focus());
 }
 
 function setDirectUrl() {
-  if (!room.isHost) return;
   const url = urlInput.value.trim();
   if (!url) return;
   room.url = url;
@@ -908,7 +922,7 @@ function setDirectUrl() {
   showUrlBar.value = false;
 }
 
-// ── UI Helpers ────────────────────────────────────────────────────────────
+// ── UI Helpers ────────────────────────────────────────────────────
 function showControls() {
   controlsHidden.value = false;
   scheduleHideControls();
@@ -1004,7 +1018,7 @@ function onKeyDown(e) {
   if (e.code === 'KeyF') toggleFullscreen();
   if (e.code === 'KeyM') toggleMute();
   if (e.code === 'KeyC') showSubtitlesModal.value = !showSubtitlesModal.value;
-  if (e.code === 'KeyS' && room.isHost) showSearchModal.value = true;
+  if (e.code === 'KeyS') showSearchModal.value = true;
   if (e.code === 'Escape' && room.activeCountdown) cancelCountdown();
 }
 
@@ -1123,7 +1137,7 @@ onMounted(async () => {
           episodeTitle: data.mediaMeta.episodeTitle,
           year: data.mediaMeta.year,
           poster: data.mediaMeta.poster,
-          url: data.url,
+          url,
           progressSeconds: 0,
           durationSeconds: 0,
         });
@@ -1451,12 +1465,13 @@ onMounted(async () => {
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  color: var(--text);
+  color: #ffffff;
   font-size: 0.82rem;
   font-weight: 500;
   transition: all 0.15s;
+  cursor: pointer;
 }
-.header-btn:hover { border-color: var(--accent); color: var(--accent); }
+.header-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(255, 255, 255, 0.08); }
 
 /* Host Pill in Header */
 .host-pill {
@@ -1500,12 +1515,12 @@ onMounted(async () => {
   padding: 4px 10px;
   border-radius: var(--radius-sm);
   font-size: 0.8rem;
-  color: var(--muted);
+  color: #ffffff;
   cursor: pointer;
   transition: border-color 0.15s;
 }
 .users-pill:hover { border-color: var(--border-light); }
-.user-count { font-weight: 700; color: var(--text); }
+.user-count { font-weight: 700; color: #fff; }
 .users-avatar-stack {
   display: flex;
   align-items: center;
@@ -1658,7 +1673,7 @@ onMounted(async () => {
   border-radius: var(--radius-sm);
   font-size: 0.82rem;
   font-weight: 600;
-  color: var(--text);
+  color: #fff;
   cursor: pointer;
   transition: border-color 0.15s;
 }
@@ -1693,7 +1708,7 @@ onMounted(async () => {
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  color: var(--muted);
+  color: #fff;
   cursor: pointer;
   transition: all 0.15s;
 }
@@ -1741,6 +1756,38 @@ onMounted(async () => {
   height: 100%;
   object-fit: contain;
   display: block;
+  cursor: pointer;
+}
+
+/* Center Big Play Button Overlay */
+.center-play-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  z-index: 15;
+  transition: background 0.2s;
+}
+.center-play-overlay:hover {
+  background: rgba(0, 0, 0, 0.4);
+}
+.center-play-btn {
+  width: 80px; height: 80px;
+  border-radius: 50%;
+  background: rgba(224, 61, 90, 0.9);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12px 36px rgba(224, 61, 90, 0.5);
+  transition: transform 0.15s, filter 0.15s;
+}
+.center-play-overlay:hover .center-play-btn {
+  transform: scale(1.1);
+  filter: brightness(1.15);
 }
 
 /* Placeholder */
@@ -1751,30 +1798,32 @@ onMounted(async () => {
   width: 100%; height: 100%;
   padding: 24px;
   text-align: center;
+  background: radial-gradient(circle at center, #181824 0%, #0c0c14 100%);
 }
 .placeholder-inner {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  max-width: 440px;
+  gap: 14px;
+  max-width: 480px;
 }
 .ph-icon-wrap {
-  width: 72px; height: 72px;
-  background: var(--accent-dim);
-  border: 1px solid rgba(224, 61, 90, 0.3);
+  width: 84px; height: 84px;
+  background: rgba(224, 61, 90, 0.15);
+  border: 2px solid rgba(224, 61, 90, 0.4);
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--accent);
+  box-shadow: 0 0 32px rgba(224, 61, 90, 0.25);
 }
-.ph-title { font-size: 1.3rem; font-weight: 700; color: var(--text); }
-.ph-sub { font-size: 0.88rem; color: var(--muted); line-height: 1.5; }
+.ph-title { font-size: 1.5rem; font-weight: 700; color: #ffffff; letter-spacing: -0.01em; }
+.ph-sub { font-size: 0.92rem; color: var(--muted); line-height: 1.5; }
 .placeholder-actions {
   display: flex;
-  gap: 10px;
-  margin-top: 6px;
+  gap: 12px;
+  margin-top: 8px;
   flex-wrap: wrap;
   justify-content: center;
 }
@@ -1782,16 +1831,17 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 18px;
+  padding: 12px 22px;
   border-radius: var(--radius-sm);
-  font-size: 0.88rem;
+  font-size: 0.92rem;
   font-weight: 600;
+  cursor: pointer;
   transition: all 0.15s;
 }
-.btn-ph-search { background: var(--accent); color: #fff; }
-.btn-ph-search:hover { filter: brightness(1.15); }
-.btn-ph-url { background: var(--surface2); border: 1px solid var(--border); color: var(--text); }
-.btn-ph-url:hover { border-color: var(--border-light); }
+.btn-ph-search { background: var(--accent); color: #fff; border: 1px solid var(--accent); }
+.btn-ph-search:hover { filter: brightness(1.15); transform: translateY(-1px); box-shadow: 0 6px 20px rgba(224, 61, 90, 0.4); }
+.btn-ph-url { background: var(--surface2); border: 1px solid var(--border); color: #ffffff; }
+.btn-ph-url:hover { border-color: var(--border-light); transform: translateY(-1px); }
 
 .buffering-overlay {
   position: absolute;
@@ -1801,10 +1851,11 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   pointer-events: none;
+  z-index: 18;
 }
 .buf-spinner {
-  width: 48px; height: 48px;
-  border: 3px solid rgba(255, 255, 255, 0.15);
+  width: 52px; height: 52px;
+  border: 4px solid rgba(255, 255, 255, 0.2);
   border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -1814,7 +1865,7 @@ onMounted(async () => {
 .countdown-overlay {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
@@ -1828,28 +1879,28 @@ onMounted(async () => {
   align-items: center;
   gap: 16px;
   background: rgba(18, 18, 26, 0.95);
-  border: 1px solid rgba(224, 61, 90, 0.4);
+  border: 1px solid rgba(224, 61, 90, 0.5);
   border-radius: var(--radius-lg);
   padding: 28px 36px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.8);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.85);
   text-align: center;
   max-width: min(380px, 90%);
 }
 .countdown-circle {
-  width: 76px; height: 76px;
+  width: 80px; height: 80px;
   border-radius: 50%;
-  background: rgba(224, 61, 90, 0.15);
+  background: rgba(224, 61, 90, 0.18);
   border: 3px solid var(--accent);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 0 24px rgba(224, 61, 90, 0.4);
+  box-shadow: 0 0 28px rgba(224, 61, 90, 0.45);
   animation: pulse-countdown 1s infinite ease-in-out;
 }
 .countdown-num {
-  font-size: 2.2rem;
+  font-size: 2.4rem;
   font-weight: 800;
-  color: #fff;
+  color: #ffffff;
 }
 @keyframes pulse-countdown {
   0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(224, 61, 90, 0.3); }
@@ -1861,22 +1912,22 @@ onMounted(async () => {
   gap: 4px;
 }
 .countdown-title {
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   font-weight: 700;
-  color: var(--text);
+  color: #ffffff;
   letter-spacing: 0.01em;
 }
 .countdown-sub {
-  font-size: 0.82rem;
+  font-size: 0.85rem;
   color: var(--muted);
 }
 .btn-cancel-countdown {
-  padding: 8px 20px;
+  padding: 8px 22px;
   background: var(--surface2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  color: var(--text);
-  font-size: 0.82rem;
+  color: #ffffff;
+  font-size: 0.85rem;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
@@ -1884,14 +1935,15 @@ onMounted(async () => {
 .btn-cancel-countdown:hover {
   border-color: var(--accent);
   color: var(--accent);
+  background: rgba(224, 61, 90, 0.1);
 }
 
 /* Media Title Top Overlay */
 .media-title-overlay {
   position: absolute;
   top: 16px; left: 16px;
-  background: rgba(18, 18, 26, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(18, 18, 26, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: var(--radius-sm);
   padding: 8px 14px;
   display: flex;
@@ -1901,9 +1953,9 @@ onMounted(async () => {
   z-index: 20;
   pointer-events: none;
 }
-.m-title { font-size: 0.92rem; font-weight: 700; color: #fff; }
-.m-ep { font-size: 0.82rem; color: var(--gold); }
-.m-year { font-size: 0.78rem; color: var(--muted); }
+.m-title { font-size: 0.95rem; font-weight: 700; color: #ffffff; }
+.m-ep { font-size: 0.85rem; color: var(--gold); }
+.m-year { font-size: 0.8rem; color: var(--muted); }
 
 /* Direct URL Bar Overlay */
 .url-bar-wrap {
@@ -1929,18 +1981,20 @@ onMounted(async () => {
   background: transparent;
   border: none;
   padding: 6px 10px;
-  font-size: 0.85rem;
-  color: var(--text);
+  font-size: 0.88rem;
+  color: #ffffff;
 }
 .url-bar input:focus { outline: none; }
 .btn-load-url {
-  padding: 6px 14px;
+  padding: 6px 16px;
   background: var(--accent);
   border-radius: var(--radius-sm);
-  font-size: 0.82rem;
+  font-size: 0.85rem;
   font-weight: 600;
   color: #fff;
+  border: none;
   flex-shrink: 0;
+  cursor: pointer;
   transition: filter 0.15s;
 }
 .btn-load-url:hover:not(:disabled) { filter: brightness(1.15); }
@@ -1951,14 +2005,14 @@ onMounted(async () => {
   padding: 6px;
   cursor: pointer;
 }
-.btn-close-url:hover { color: var(--text); }
+.btn-close-url:hover { color: #ffffff; }
 
 /* ── Player Controls ─────────────────────────────────────────────────────── */
 .controls {
   position: absolute;
   bottom: 0; left: 0; right: 0;
-  background: linear-gradient(0deg, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.4) 60%, transparent 100%);
-  padding: 40px 16px 12px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.95) 0%, rgba(0, 0, 0, 0.6) 60%, transparent 100%);
+  padding: 40px 20px 14px;
   z-index: 20;
   transition: opacity 0.25s ease, transform 0.25s ease;
 }
@@ -1971,18 +2025,22 @@ onMounted(async () => {
 .controls-inner {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 
 /* Scrub Bar */
 .scrub-bar-wrap {
   position: relative;
   height: 8px;
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.25);
   border-radius: 4px;
   cursor: pointer;
   display: flex;
   align-items: center;
+  transition: height 0.15s;
+}
+.scrub-bar-wrap:hover {
+  height: 10px;
 }
 .scrub-bar-wrap.readonly-scrub {
   cursor: default;
@@ -1993,6 +2051,7 @@ onMounted(async () => {
   background: var(--accent);
   border-radius: 4px;
   pointer-events: none;
+  box-shadow: 0 0 10px rgba(224, 61, 90, 0.5);
 }
 .scrub-bar {
   position: absolute;
@@ -2015,27 +2074,40 @@ onMounted(async () => {
 .controls-left, .controls-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
 .ctrl-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px; height: 36px;
-  background: transparent;
-  border: none;
+  width: 38px; height: 38px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: var(--radius-sm);
-  color: #fff;
+  color: #ffffff;
   cursor: pointer;
   transition: all 0.15s;
   position: relative;
 }
 .ctrl-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.25);
+  border-color: rgba(255, 255, 255, 0.4);
+  transform: translateY(-1px);
+}
+.ctrl-btn.main-play-btn {
+  background: var(--accent);
+  border-color: var(--accent);
+  width: 42px; height: 42px;
+}
+.ctrl-btn.main-play-btn:hover {
+  filter: brightness(1.2);
+  box-shadow: 0 4px 16px rgba(224, 61, 90, 0.5);
 }
 .ctrl-btn.active {
-  color: var(--accent);
+  color: #ffffff;
+  background: var(--accent);
+  border-color: var(--accent);
 }
 .sub-label {
   position: absolute;
@@ -2054,7 +2126,15 @@ onMounted(async () => {
 .vol-wrap {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-sm);
+  padding: 0 8px 0 0;
+}
+.vol-wrap .ctrl-btn {
+  background: transparent;
+  border: none;
 }
 .vol-slider {
   width: 70px;
@@ -2064,13 +2144,16 @@ onMounted(async () => {
 
 /* Time Display */
 .time-display {
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #ffffff;
   font-variant-numeric: tabular-nums;
   margin-left: 6px;
+  letter-spacing: 0.02em;
 }
+.time-cur { color: #ffffff; }
 .time-sep { margin: 0 4px; color: rgba(255, 255, 255, 0.4); }
+.time-dur { color: rgba(255, 255, 255, 0.7); }
 
 /* ── Chat Sidebar ────────────────────────────────────────────────────────── */
 .chat-sidebar {
