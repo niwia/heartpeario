@@ -181,6 +181,10 @@ class MpvController:
         self.listener_thread = threading.Thread(target=self._read_events, daemon=True)
         self.listener_thread.start()
 
+        # Observe properties for live status and duration reporting
+        self.send_cmd(["observe_property", 1, "duration"])
+        self.send_cmd(["observe_property", 2, "pause"])
+
     def _read_events(self):
         buf = ""
         while self.running and self.sock:
@@ -201,6 +205,14 @@ class MpvController:
                             print_log("PLAYER", f"▶ mpv stream ready: {self.current_title or 'Video'}", "\033[92m")
                             if self.on_status:
                                 self.on_status("playing", {"title": self.current_title})
+                        elif event_name == "property-change":
+                            p_name = ev.get("name")
+                            p_data = ev.get("data")
+                            if p_name == "duration" and p_data and self.on_status:
+                                try:
+                                    self.on_status("playing", {"duration": float(p_data)})
+                                except Exception:
+                                    pass
                         elif event_name == "pause":
                             if self.on_status:
                                 self.on_status("paused", {})

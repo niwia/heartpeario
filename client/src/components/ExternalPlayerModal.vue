@@ -22,9 +22,9 @@
         <!-- Viewing Mode Card -->
         <div class="section-card mode-toggle-card">
           <div class="mode-info">
-            <span class="mode-label">Your Viewing Mode:</span>
+            <span class="mode-label">Viewing Mode:</span>
             <span class="mode-badge" :class="watchInDesktop ? 'badge-desktop' : 'badge-browser'">
-              {{ watchInDesktop ? '🖥 Desktop Player (mpv)' : '🌐 Web Browser Video' }}
+              {{ watchInDesktop ? '🖥 Desktop Player (Primary)' : '🌐 Web Browser Video' }}
             </span>
           </div>
           <button
@@ -32,26 +32,36 @@
             :class="{ 'btn-switch-to-desktop': !watchInDesktop, 'btn-switch-to-browser': watchInDesktop }"
             @click="emit('switch-desktop', !watchInDesktop)"
           >
-            {{ watchInDesktop ? 'Switch to Browser Video' : 'Switch to Desktop Player Screen' }}
+            {{ watchInDesktop ? 'Switch to In-Browser Video' : 'Switch to Desktop Player (Primary)' }}
           </button>
         </div>
 
         <!-- Synced Companion Section (Recommended) -->
         <div class="section-card sync-hero-card">
-          <div class="card-badge">RECOMMENDED FOR MKV & 4K</div>
+          <div class="card-badge">PRIMARY & RECOMMENDED</div>
           <h3>⚡ Live Desktop Companion (Zero Install)</h3>
           <p class="section-desc">
-            Bypass browser format limitations (MKV, TrueHD, Atmos). Launch our standalone companion script to play directly in <strong>mpv</strong> or <strong>VLC</strong> while staying 100% in sync with everyone in the room.
+            Play full native <strong>4K, 10-bit HEVC, MKV containers, Dolby Vision & Atmos</strong> in <strong>mpv</strong> or <strong>VLC</strong> while staying 100% in sync with everyone in the room.
           </p>
 
           <div class="code-box-wrap">
             <div class="code-box-header">
-              <span>Run in Terminal (Linux, Steam Deck, macOS, Windows)</span>
+              <span>Linux, Steam Deck & macOS (Terminal)</span>
               <button class="btn-copy-code" @click="copyCompanionCmd">
                 {{ copiedCmd ? '✓ Copied' : 'Copy Command' }}
               </button>
             </div>
             <pre class="code-block"><code>{{ companionCmd }}</code></pre>
+          </div>
+
+          <div class="code-box-wrap">
+            <div class="code-box-header">
+              <span>Windows (PowerShell or Command Prompt)</span>
+              <button class="btn-copy-code" @click="copyWindowsCmd">
+                {{ copiedWinCmd ? '✓ Copied' : 'Copy Command' }}
+              </button>
+            </div>
+            <pre class="code-block"><code>{{ windowsCmd }}</code></pre>
           </div>
 
           <div class="companion-actions">
@@ -162,15 +172,25 @@ const props = defineProps({
 const emit = defineEmits(['close', 'switch-desktop']);
 
 const copiedCmd = ref(false);
+const copiedWinCmd = ref(false);
 const copiedKey = ref(null);
 
+const appBaseUrl = computed(() => {
+  const origin = window.location.origin;
+  const path = window.location.pathname.startsWith('/watchpear2') ? '/watchpear2/' : '/';
+  return origin + path;
+});
+
 const companionScriptUrl = computed(() => {
-  const base = window.location.origin + (window.location.pathname.startsWith('/watchpear2') ? '/watchpear2/' : '/');
-  return `${base.replace(/\/+$/, '')}/heartpeario-sync.py`;
+  return `${appBaseUrl.value.replace(/\/+$/, '')}/heartpeario-sync.py`;
 });
 
 const companionCmd = computed(() => {
-  return `curl -s ${companionScriptUrl.value} | python3 - --room ${props.roomId.toUpperCase()}`;
+  return `curl -s ${companionScriptUrl.value} | python3 - --room ${props.roomId.toUpperCase()} --url "${appBaseUrl.value}"`;
+});
+
+const windowsCmd = computed(() => {
+  return `python -c "import urllib.request; exec(urllib.request.urlopen('${companionScriptUrl.value}').read().decode())" --room ${props.roomId.toUpperCase()} --url "${appBaseUrl.value}"`;
 });
 
 const formattedTime = computed(() => {
@@ -197,6 +217,14 @@ async function copyCompanionCmd() {
     await navigator.clipboard.writeText(companionCmd.value);
     copiedCmd.value = true;
     setTimeout(() => { copiedCmd.value = false; }, 2500);
+  } catch {}
+}
+
+async function copyWindowsCmd() {
+  try {
+    await navigator.clipboard.writeText(windowsCmd.value);
+    copiedWinCmd.value = true;
+    setTimeout(() => { copiedWinCmd.value = false; }, 2500);
   } catch {}
 }
 

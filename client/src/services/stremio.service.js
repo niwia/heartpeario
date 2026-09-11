@@ -210,61 +210,115 @@ function hasResource(addon, resourceName, type) {
  * Parse raw Stremio addon stream metadata into structured badges
  */
 export function parseStreamInfo(st) {
-  if (!st) return { filename: 'Stream', format: 'mp4', videoTags: [], audioBadges: [], providerMatches: [], remainingLines: [] };
+  if (!st) return { filename: 'Stream', format: 'mp4', videoTags: [], audioBadges: [], providerMatches: [], remainingLines: [], seeds: null };
   const name = st.name || '';
   const title = st.title || '';
   const desc = st.description || '';
-  const rawText = `${name}\n${title}\n${desc}`;
-  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+  const rawUrl = st.url || st.externalUrl || '';
+  let decodedUrl = '';
+  try {
+    decodedUrl = decodeURIComponent(rawUrl);
+  } catch {
+    decodedUrl = rawUrl;
+  }
+  const rawText = `${name}\n${title}\n${desc}\n${decodedUrl}`;
+  const lines = `${name}\n${title}\n${desc}`.split('\n').map(l => l.trim()).filter(Boolean);
 
-  // File or release name (e.g. Salt (2010).mkv or Memories.of.Murder.2003...)
-  const fileLine = lines.find(l => /\.(mkv|mp4|avi|webm|ts|m3u8)/i.test(l));
-  const filename = fileLine || lines[0] || 'Direct Stream';
+  // 1. Filename / Release name extraction
+  let filename = '';
+  // Check behaviorHints
+  if (st.behaviorHints?.filename) {
+    filename = st.behaviorHints.filename;
+  }
+  // Check query params in decoded URL (e.g. KEY5=Citizen.Vigilante...mkv or filename=...)
+  if (!filename) {
+    const key5Match = decodedUrl.match(/(?:KEY5|filename|file|title)=([^&]+\.(?:mkv|mp4|avi|webm|ts|m3u8))/i);
+    if (key5Match) {
+      filename = key5Match[1].split('/').pop();
+    }
+  }
+  // Check URL pathname for clean video file
+  if (!filename && /\.(mkv|mp4|avi|webm|ts|m3u8)/i.test(decodedUrl)) {
+    const urlPath = decodedUrl.split('?')[0].split('/').pop();
+    if (urlPath && /\.(mkv|mp4|avi|webm|ts|m3u8)/i.test(urlPath) && !urlPath.startsWith('movie.') && !urlPath.startsWith('video.')) {
+      filename = urlPath;
+    }
+  }
+  // Check lines from title/desc/name with extension
+  if (!filename) {
+    const fileLine = lines.find(l => /\.(mkv|mp4|avi|webm|ts|m3u8)/i.test(l));
+    if (fileLine) {
+      filename = fileLine;
+    }
+  }
+  // If no extension found, prefer the first line of title/description that is not just the addon name
+  if (!filename) {
+    const cleanCandidate = lines.find(l => {
+      const lower = l.toLowerCase();
+      if (lower === name.toLowerCase()) return false;
+      if (/^(⚙️|⚡|\[|\baddon\b|\bstream\b)/i.test(l) && l.length < 25) return false;
+      return true;
+    });
+    filename = cleanCandidate || lines[0] || 'Direct Stream';
+  }
 
-  // Size (e.g. 2.20 GB, 952 MB)
+  // 2. Size (e.g. 2.20 GB, 952 MB, 1.3 GiB)
   const sizeMatch = rawText.match(/(\d+(?:\.\d+)?\s*(?:GB|MB|GiB|MiB))/i);
   const size = sizeMatch ? sizeMatch[1].toUpperCase() : null;
 
-  // Languages (e.g. English, Hindi, Multi)
+  // 3. Seeds / Peers (e.g. 👤 25, 25 seeds)
+  const seedsMatch = rawText.match(/(?:👤|seeds?|peers?|seeders?)[:\s]*(\d+)/i);
+  const seeds = seedsMatch ? seedsMatch[1] : null;
+
+  // 4. Languages (e.g. English, Hindi, Multi)
   const langMatch = rawText.match(/(?:🗣|audio|lang|languages?)[:\s]*([^\n•]+)/i);
   let languages = langMatch ? langMatch[1].trim() : null;
   if (!languages && /hindi/i.test(rawText) && /english/i.test(rawText)) languages = 'English, Hindi';
   else if (!languages && /english/i.test(rawText)) languages = 'English';
 
-  // Audio Codecs
+  // 5. Audio Codecs
   const audioBadges = [];
   if (/atmos/i.test(rawText)) audioBadges.push('Dolby Atmos');
   else if (/truehd/i.test(rawText)) audioBadges.push('TrueHD');
   else if (/dts-hd|dts/i.test(rawText)) audioBadges.push('DTS');
-  else if (/dd\+?5\.1|eac3|ac3|5\.1/i.test(rawText)) audioBadges.push('5.1 Audio');
+  else if (/ddp|dd\+|e-?ac-?3/i.test(rawText)) audioBadges.push('DDP 5.1');
+  else if (/ac-?3|5\.1/i.test(rawText)) audioBadges.push('5.1 Audio');
   else if (/aac/i.test(rawText)) audioBadges.push('AAC');
 
-  // Video / Source Tags
+  // 6. Video / Source Tags
   const videoTags = [];
   if (/remux/i.test(rawText)) videoTags.push('REMUX');
   if (/bluray|bdrip/i.test(rawText)) videoTags.push('BluRay');
   else if (/web-?dl|webrip/i.test(rawText)) videoTags.push('WEB-DL');
   if (/dovi|dolby\s*vision|dv/i.test(rawText)) videoTags.push('DV');
   if (/hdr10\+|hdr/i.test(rawText)) videoTags.push('HDR');
-  if (/10bit|hevc|x265/i.test(rawText)) videoTags.push('10-bit');
-  if (/x264|h\.264|avc/i.test(rawText)) videoTags.push('x264');
+  if (/10bit|10-bit/i.test(rawText)) videoTags.push('10-bit');
+  if (/hevc|x265|h\.?265/i.test(rawText)) videoTags.push('HEVC / x265');
+  else if (/x264|h\.?264|avc/i.test(rawText)) videoTags.push('x264');
 
-  // Provider Host / Extra Info (e.g. HDHub4u, Workers, Torrentio, RD+)
+  // 7. Provider Host / Extra Info
   const providerMatches = [];
+  if (/febbox/i.test(rawText)) providerMatches.push('⚡ Febbox');
+  if (/shegu/i.test(rawText) && !providerMatches.includes('⚡ Febbox')) providerMatches.push('⚡ Shegu');
+  if (/torbox/i.test(rawText)) providerMatches.push('⚡ Torbox');
+  if (/debrid|realdebrid|rd\+/i.test(rawText)) providerMatches.push('⚡ Debrid');
+  if (/alldebrid/i.test(rawText)) providerMatches.push('⚡ AllDebrid');
+  if (/premiumize/i.test(rawText)) providerMatches.push('⚡ Premiumize');
   if (/hdhub4u/i.test(rawText)) providerMatches.push('HDHub4u');
   if (/workers/i.test(rawText)) providerMatches.push('⚡ Workers');
-  if (/debrid|realdebrid|rd\+/i.test(rawText)) providerMatches.push('⚡ Debrid');
 
-  // Container Format
-  const url = (st.url || st.externalUrl || '').toLowerCase();
+  // 8. Container Format
+  const urlLower = rawUrl.toLowerCase();
+  const decodedLower = decodedUrl.toLowerCase();
+  const textLower = rawText.toLowerCase();
   let format = 'mp4';
-  if (url.includes('.m3u8') || url.includes('/direct/external/') || rawText.toLowerCase().includes('.m3u8')) {
+  if (urlLower.includes('.m3u8') || urlLower.includes('/direct/external/') || textLower.includes('.m3u8')) {
     format = 'hls';
-  } else if (url.includes('.mkv') || rawText.toLowerCase().includes('.mkv')) {
+  } else if (urlLower.includes('.mkv') || decodedLower.includes('.mkv') || textLower.includes('.mkv')) {
     format = 'mkv';
   }
 
-  // Quality label
+  // 9. Quality label
   let quality = '';
   const qText = rawText.toUpperCase();
   if (qText.includes('4K') || qText.includes('2160P')) quality = '4K';
@@ -272,11 +326,18 @@ export function parseStreamInfo(st) {
   else if (qText.includes('720P')) quality = '720p';
   else if (qText.includes('480P') || qText.includes('360P')) quality = 'SD';
 
-  const remainingLines = lines.filter(l => l !== filename && !l.includes(filename) && !l.includes(st.name || '___')).slice(0, 3);
+  const remainingLines = lines.filter(l => {
+    if (l === filename) return false;
+    if (filename.includes(l) && l.length > 5) return false;
+    if (st.name && l.includes(st.name)) return false;
+    if (/^(4k|1080p|720p|sd)$/i.test(l)) return false;
+    return true;
+  }).slice(0, 3);
 
   return {
     filename,
     size,
+    seeds,
     languages,
     audioBadges,
     videoTags,

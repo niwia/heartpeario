@@ -189,17 +189,21 @@
                     </span>
                     <!-- Format Badge -->
                     <span v-if="parseStreamInfo(st).format === 'mkv'" class="format-pill format-mkv" title="MKV container - plays via Desktop Player (mpv/VLC)">
-                      MKV (Desktop only)
+                      MKV · Desktop (mpv/VLC)
                     </span>
-                    <span v-else-if="parseStreamInfo(st).format === 'hls'" class="format-pill format-hls" title="HLS adaptive stream - playable in browser">
+                    <span v-else-if="parseStreamInfo(st).format === 'hls'" class="format-pill format-hls" title="HLS adaptive stream">
                       HLS
                     </span>
-                    <span v-else class="format-pill format-mp4" title="MP4 stream - playable in browser">
+                    <span v-else class="format-pill format-mp4" title="MP4 stream">
                       MP4
                     </span>
                     <!-- Size Badge -->
                     <span v-if="parseStreamInfo(st).size" class="size-pill">
                       💾 {{ parseStreamInfo(st).size }}
+                    </span>
+                    <!-- Seeds Badge -->
+                    <span v-if="parseStreamInfo(st).seeds" class="size-pill seeds-pill" title="Active torrent seeds">
+                      👥 {{ parseStreamInfo(st).seeds }}
                     </span>
                     <!-- Health Badge -->
                     <span
@@ -251,9 +255,13 @@
                   </div>
                 </div>
 
-                <button class="btn-play-stream" title="Stream in room for everyone">
-                  <Icon name="play" size="14" />
-                  <span>Play</span>
+                <button
+                  class="btn-play-stream"
+                  :class="{ 'btn-play-desktop': parseStreamInfo(st).format === 'mkv' }"
+                  title="Stream in room for everyone"
+                >
+                  <Icon :name="parseStreamInfo(st).format === 'mkv' ? 'monitor' : 'play'" size="14" />
+                  <span>{{ parseStreamInfo(st).format === 'mkv' ? 'Play in mpv' : 'Play' }}</span>
                 </button>
               </div>
             </div>
@@ -1100,6 +1108,20 @@ onMounted(() => {
 .stream-card:hover .btn-play-stream {
   background: rgba(255, 255, 255, 0.1);
   border-color: #ffffff;
+}
+.btn-play-desktop {
+  border-color: rgba(61, 190, 122, 0.45);
+  color: #3dbe7a;
+}
+.stream-card:hover .btn-play-desktop {
+  background: rgba(61, 190, 122, 0.18);
+  border-color: #3dbe7a;
+  color: #ffffff;
+}
+.seeds-pill {
+  color: #a8d5ff !important;
+  background: rgba(168, 213, 255, 0.1) !important;
+  border-color: rgba(168, 213, 255, 0.25) !important;
 }
 
 .search-loading-state, .streams-loading-box {

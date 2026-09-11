@@ -82,7 +82,7 @@
                   </span>
                   <!-- Format Pill -->
                   <span v-if="parseStreamInfo(s).format === 'mkv'" class="format-pill format-mkv" title="MKV container - plays via Desktop Player (mpv/VLC)">
-                    MKV (Desktop only)
+                    MKV · Desktop (mpv/VLC)
                   </span>
                   <span v-else-if="parseStreamInfo(s).format === 'hls'" class="format-pill format-hls" title="HLS adaptive streaming playlist">
                     HLS
@@ -93,6 +93,10 @@
                   <!-- Size Badge -->
                   <span v-if="parseStreamInfo(s).size" class="size-pill">
                     💾 {{ parseStreamInfo(s).size }}
+                  </span>
+                  <!-- Seeds Badge -->
+                  <span v-if="parseStreamInfo(s).seeds" class="size-pill seeds-pill" title="Active torrent seeds">
+                    👥 {{ parseStreamInfo(s).seeds }}
                   </span>
                   <!-- Stream Health Badge -->
                   <span
@@ -157,8 +161,12 @@
 
             <div class="source-right">
               <span v-if="currentUrl === (s.url || s.externalUrl)" class="playing-badge">PLAYING</span>
-              <button v-else class="btn-switch-source">
-                Select
+              <button
+                v-else
+                class="btn-switch-source"
+                :class="{ 'btn-switch-desktop': parseStreamInfo(s).format === 'mkv' }"
+              >
+                {{ parseStreamInfo(s).format === 'mkv' ? 'Play in mpv' : 'Select' }}
               </button>
             </div>
           </div>
@@ -711,6 +719,20 @@ onMounted(() => {
 .btn-switch-source:hover {
   background: rgba(255, 255, 255, 0.1);
   border-color: #ffffff;
+}
+.btn-switch-desktop {
+  border-color: rgba(61, 190, 122, 0.45);
+  color: #3dbe7a;
+}
+.btn-switch-desktop:hover {
+  background: rgba(61, 190, 122, 0.18);
+  border-color: #3dbe7a;
+  color: #ffffff;
+}
+.seeds-pill {
+  color: #a8d5ff !important;
+  background: rgba(168, 213, 255, 0.1) !important;
+  border-color: rgba(168, 213, 255, 0.25) !important;
 }
 
 .modal-footer {

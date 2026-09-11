@@ -128,6 +128,18 @@
       </div>
 
       <div class="header-right">
+        <!-- Playback Mode Pill (Primary Desktop Player vs In-Browser) -->
+        <button
+          class="header-btn mode-pill-btn"
+          :class="{ 'is-desktop-mode': watchInDesktop }"
+          @click="showExternalPlayerModal = true"
+          :title="watchInDesktop ? 'Desktop Player Mode (Primary) — Click for options' : 'In-Browser Video Mode — Click to switch'"
+        >
+          <Icon name="monitor" size="14" />
+          <span>{{ watchInDesktop ? 'Desktop Player' : 'Browser Video' }}</span>
+          <span v-if="hasExternalCompanion" class="header-live-dot" title="Desktop companion connected"></span>
+        </button>
+
         <!-- Host Indicator Badge -->
         <div class="host-pill" :class="{ 'is-you': room.isHost }">
           <span class="host-pill-tag">HOST</span>
@@ -272,6 +284,12 @@
             <div v-else class="empty-cinema-prompt">
               <h2 class="ph-title">Ready to Play</h2>
               <p class="ph-sub">Search for movies or shows from your addons, or load a stream link.</p>
+              <div class="ph-mode-status" @click="showExternalPlayerModal = true" title="Configure desktop player companion">
+                <Icon name="monitor" size="14" />
+                <span>Primary Mode: <strong>{{ watchInDesktop ? 'Desktop Player (mpv / VLC)' : 'Browser Video' }}</strong></span>
+                <span v-if="hasExternalCompanion" class="active-dot-mini-ph">🟢 Synced</span>
+                <span v-else class="status-tip-ph">⚡ Click to Setup Companion</span>
+              </div>
             </div>
 
             <!-- Quick Action Buttons -->
@@ -387,36 +405,78 @@
           </button>
         </div>
 
-        <!-- ── Desktop Player Synced Screen (Active only when user opts in to watch in mpv) ── -->
+        <!-- ── Desktop Player Synced Screen (Primary Playback Mode) ── -->
         <div
           v-if="watchInDesktop && room.url"
           class="desktop-player-overlay"
           :style="pauseOverlayStyle"
         >
-          <div class="desktop-player-content">
-            <div class="desktop-status-pill">
-              <span class="pulsing-radar-dot"></span>
-              <span>SYNCHRONIZED WITH {{ activeExternalCompanion?.playerType?.toUpperCase() || 'DESKTOP PLAYER' }}</span>
+          <!-- Center Play / Pause Button with Glow -->
+          <div
+            class="center-play-button"
+            @click="togglePlay"
+            :title="paused ? 'Click to Play in Room' : 'Click to Pause Room'"
+          >
+            <div class="center-play-circle">
+              <Icon :name="paused ? 'play' : 'pause'" size="34" />
             </div>
+          </div>
+
+          <div class="desktop-player-content">
+            <div class="desktop-status-pill" :class="{ 'companion-active': hasExternalCompanion }">
+              <span class="pulsing-radar-dot"></span>
+              <span v-if="hasExternalCompanion">
+                SYNCHRONIZED WITH {{ activeExternalCompanion?.playerType?.toUpperCase() || 'DESKTOP PLAYER' }}
+              </span>
+              <span v-else>
+                DESKTOP PLAYER MODE (PRIMARY)
+              </span>
+            </div>
+
             <h1 class="desktop-player-title">{{ room.mediaMeta?.title || 'Video Stream' }}</h1>
             <p v-if="room.mediaMeta?.episodeTitle" class="desktop-player-ep">
               {{ room.mediaMeta.episodeTitle }}
             </p>
-            <p class="desktop-player-hint">
-              Video is playing on your desktop in <strong>{{ activeExternalCompanion?.playerType?.toUpperCase() || 'mpv' }}</strong> with full audio/video codecs and zero browser overhead.
+
+            <!-- Stream Codec & Format Badges -->
+            <div class="desktop-player-tags">
+              <span v-if="currentStreamParsed.quality" class="dtag dtag-quality">{{ currentStreamParsed.quality }}</span>
+              <span class="dtag dtag-format">{{ currentStreamParsed.format.toUpperCase() }}</span>
+              <span v-for="tag in currentStreamParsed.videoTags" :key="tag" class="dtag">{{ tag }}</span>
+              <span v-for="aud in currentStreamParsed.audioBadges" :key="aud" class="dtag dtag-audio">{{ aud }}</span>
+              <span v-if="currentStreamParsed.size" class="dtag">💾 {{ currentStreamParsed.size }}</span>
+            </div>
+
+            <!-- Hint or Quick Terminal Command -->
+            <p class="desktop-player-hint" v-if="hasExternalCompanion">
+              Playing natively on your desktop in <strong>{{ activeExternalCompanion?.playerType?.toUpperCase() || 'mpv' }}</strong> with full audio/video codecs and zero browser overhead.
             </p>
+            <div v-else class="desktop-quick-launch-box">
+              <div class="quick-launch-header">
+                <span>⚡ Run Desktop Companion (Terminal):</span>
+                <button class="btn-copy-quick-cmd" @click="copyCompanionRunCommand">
+                  {{ copiedQuickCmd ? '✓ Copied' : 'Copy Command' }}
+                </button>
+              </div>
+              <code class="quick-cmd-text">{{ companionRunCommand }}</code>
+            </div>
+
             <div class="desktop-player-stats">
               <span class="stat-pill">⏱ {{ fmtTime(currentTime) }} / {{ fmtTime(duration) }}</span>
               <span class="stat-pill">👥 {{ room.users?.length || 1 }} viewer(s) in room</span>
-              <span class="stat-pill status-live">🟢 {{ externalPlayerState === 'playing' ? 'Playing' : (externalPlayerState === 'paused' ? 'Paused' : 'Synced') }}</span>
+              <span class="stat-pill status-live" :class="{ 'is-active': externalPlayerState === 'playing' }">
+                🟢 {{ externalPlayerState === 'playing' ? 'mpv Playing' : (externalPlayerState === 'paused' ? 'mpv Paused' : (hasExternalCompanion ? 'Companion Ready' : 'Desktop Mode Active')) }}
+              </span>
             </div>
+
             <div class="desktop-player-actions">
               <button class="btn-desktop-act" @click="showExternalPlayerModal = true">
                 <Icon name="monitor" size="16" />
-                <span>Player Options</span>
+                <span>Player Options & Links</span>
               </button>
-              <button class="btn-desktop-act btn-sec" @click="watchInDesktop = false; streamFailed = false; loadMediaSource(room.url)">
-                <span>Switch to Browser Video</span>
+              <button class="btn-desktop-act btn-sec" @click="setPlaybackMode(false)">
+                <Icon name="play" size="14" />
+                <span>Try in Browser Video</span>
               </button>
             </div>
           </div>
@@ -433,12 +493,21 @@
             </div>
             <h3 class="err-title">{{ streamErrorTitle || 'Stream Playback Error' }}</h3>
             <p class="err-sub">
-              {{ streamErrorReason || 'The stream host returned an error or unsupported format.' }}
+              {{ streamErrorReason || 'The stream host returned an error or unsupported format in the browser.' }}
             </p>
             <p class="err-hint">
-              Choose another stream source or provider for <strong>{{ room.mediaMeta?.title || 'this video' }}</strong>.
+              High-quality MKV, 10-bit HEVC, and multi-channel audio streams play seamlessly via the Desktop Player.
             </p>
             <div class="err-actions">
+              <!-- Primary: Play in mpv / VLC -->
+              <button class="btn-err-action btn-open-external primary-err-action" @click="setPlaybackMode(true); showExternalPlayerModal = true">
+                <Icon name="monitor" size="16" />
+                <span>Play in Desktop Player (mpv / VLC)</span>
+              </button>
+              <button class="btn-err-action btn-choose-sources" @click="showSourcesModal = true">
+                <Icon name="sources" size="16" />
+                <span>Choose Another Source</span>
+              </button>
               <!-- CORS-blocked streams get an explicit proxy opt-in button -->
               <button
                 v-if="streamCorsBlocked && streamProxyUrl"
@@ -448,14 +517,6 @@
               >
                 <Icon name="play" size="16" />
                 <span>Try via Server Proxy</span>
-              </button>
-              <button class="btn-err-action btn-choose-sources" @click="showSourcesModal = true">
-                <Icon name="sources" size="16" />
-                <span>Choose Another Source</span>
-              </button>
-              <button class="btn-err-action btn-open-external" @click="watchInDesktop = true; showExternalPlayerModal = true">
-                <Icon name="monitor" size="16" />
-                <span>Play in mpv / VLC</span>
               </button>
               <button class="btn-err-action btn-open-search" @click="showSearchModal = true">
                 <Icon name="search" size="16" />
@@ -675,7 +736,7 @@
       :current-time="currentTime"
       :users="room.users"
       :watch-in-desktop="watchInDesktop"
-      @switch-desktop="watchInDesktop = $event"
+      @switch-desktop="setPlaybackMode($event)"
       @close="showExternalPlayerModal = false"
     />
 
@@ -691,6 +752,7 @@ import { useProfileStore } from '@/stores/profile';
 import socket from '@/services/socket';
 import { srtToVtt, parseVttCues, loadSubtitleData } from '@/services/subtitle.service';
 import { enrichMediaWithTmdb } from '@/services/tmdb.service';
+import { parseStreamInfo } from '@/services/stremio.service';
 
 import Icon from '@/components/Icon.vue';
 import SearchMediaModal from '@/components/SearchMediaModal.vue';
@@ -719,11 +781,90 @@ const showJoinPrompt = ref(false);
 const showUsersMenu = ref(false);
 const showRoomCodeMenu = ref(false);
 
-const watchInDesktop = ref(false);
+// ── Playback Mode: Desktop Player (mpv / VLC) is PRIMARY by default ───────
+const storedPlaybackMode = typeof localStorage !== 'undefined' ? localStorage.getItem('heartpeario_playback_mode') : null;
+const watchInDesktop = ref(storedPlaybackMode !== 'browser');
 const externalPlayerState = ref(null);
 const externalCompanions = computed(() => (room.users || []).filter(u => u.isExternalPlayer));
 const hasExternalCompanion = computed(() => externalCompanions.value.length > 0);
 const activeExternalCompanion = computed(() => externalCompanions.value[0] || null);
+
+const companionScriptUrl = computed(() => {
+  const base = window.location.origin + (window.location.pathname.startsWith('/watchpear2') ? '/watchpear2/' : '/');
+  return `${base.replace(/\/+$/, '')}/heartpeario-sync.py`;
+});
+
+const appBaseUrl = computed(() => {
+  const origin = window.location.origin;
+  const path = window.location.pathname.startsWith('/watchpear2') ? '/watchpear2/' : '/';
+  return origin + path;
+});
+
+const companionRunCommand = computed(() => {
+  const rCode = (room.roomId || route.params.id || 'TEST').toUpperCase();
+  return `curl -s ${companionScriptUrl.value} | python3 - --room ${rCode} --url "${appBaseUrl.value}"`;
+});
+
+const currentStreamParsed = computed(() => {
+  if (!room.url) return { format: 'mp4', quality: '', videoTags: [], audioBadges: [], size: '' };
+  return parseStreamInfo({
+    name: room.mediaMeta?.title || '',
+    title: room.mediaMeta?.title || '',
+    url: room.url,
+  });
+});
+
+const copiedQuickCmd = ref(false);
+async function copyCompanionRunCommand() {
+  try {
+    await navigator.clipboard.writeText(companionRunCommand.value);
+    copiedQuickCmd.value = true;
+    doToast('Companion command copied to clipboard!');
+    setTimeout(() => { copiedQuickCmd.value = false; }, 3000);
+  } catch {
+    doToast('Failed to copy command');
+  }
+}
+
+function setPlaybackMode(isDesktop) {
+  watchInDesktop.value = isDesktop;
+  localStorage.setItem('heartpeario_playback_mode', isDesktop ? 'desktop' : 'browser');
+  if (isDesktop) {
+    cleanupHls();
+    clearLoadTimeout();
+    if (videoEl.value) {
+      videoEl.value.removeAttribute('src');
+      videoEl.value.load();
+    }
+    streamFailed.value = false;
+    streamCorsBlocked.value = false;
+    doToast('Switched to Desktop Player (mpv / VLC) mode');
+  } else {
+    streamFailed.value = false;
+    if (room.url) {
+      loadMediaSource(room.url);
+    }
+    doToast('Switched to In-Browser Video mode');
+  }
+}
+
+let desktopTicker = null;
+watch([() => paused.value, () => watchInDesktop.value], ([isPaused, isDesktop]) => {
+  if (desktopTicker) {
+    clearInterval(desktopTicker);
+    desktopTicker = null;
+  }
+  if (!isPaused && isDesktop) {
+    desktopTicker = setInterval(() => {
+      if (!isUserScrubbing.value && room.url) {
+        const maxDur = duration.value > 0 ? duration.value : 999999;
+        if (currentTime.value < maxDur) {
+          currentTime.value = Math.min(maxDur, currentTime.value + 1);
+        }
+      }
+    }, 1000);
+  }
+}, { immediate: true });
 
 const joinNameInput = ref('');
 const newRoomCodeInput = ref('');
@@ -973,13 +1114,13 @@ function logDebug(...args) {
 
 // ── Player Controls & Host Action Countdown Dispatch ──────────────────────
 function togglePlay() {
-  if (!videoEl.value || !room.url) return;
+  if (!room.url) return;
   if (room.activeCountdown) {
     cancelCountdown();
     return;
   }
 
-  const currentPos = videoEl.value.currentTime || 0;
+  const currentPos = watchInDesktop.value ? (currentTime.value || 0) : (videoEl.value?.currentTime || currentTime.value || 0);
   if (room.isHost) {
     socket.send('player.countdown_action', {
       action: paused.value ? 'PLAY' : 'PAUSE',
@@ -995,8 +1136,8 @@ function togglePlay() {
 }
 
 function skip(deltaSeconds) {
-  if (!videoEl.value || !room.url || !room.isHost) return;
-  const currentPos = videoEl.value.currentTime || 0;
+  if (!room.url || !room.isHost) return;
+  const currentPos = watchInDesktop.value ? (currentTime.value || 0) : (videoEl.value?.currentTime || currentTime.value || 0);
   const newTime = Math.max(0, Math.min(duration.value || 999999, currentPos + deltaSeconds));
   socket.send('player.countdown_action', {
     action: 'SEEK',
@@ -1013,6 +1154,7 @@ function onSeekEnd(e) {
   isUserScrubbing.value = false;
   if (!room.isHost) return;
   const targetTime = parseFloat(e.target.value);
+  currentTime.value = targetTime;
   socket.send('player.countdown_action', {
     action: 'SEEK',
     time: targetTime,
@@ -1220,6 +1362,16 @@ async function checkHlsCors(url) {
 }
 
 function loadMediaSource(url) {
+  if (watchInDesktop.value) {
+    cleanupHls();
+    clearLoadTimeout();
+    if (videoEl.value) {
+      videoEl.value.removeAttribute('src');
+      videoEl.value.load();
+    }
+    streamFailed.value = false;
+    return;
+  }
   if (!videoEl.value) return;
   cleanupHls();
   clearLoadTimeout();
@@ -1349,7 +1501,7 @@ function attachHlsInstance(url) {
           }
           break;
         case Hls.ErrorTypes.MEDIA_ERROR:
-          logDebug('[HLS] Media error encountered, attempting recovery...');
+          logDebug('[HLS] Media error – attempting recovery...');
           hlsInstance.recoverMediaError();
           break;
         default:
@@ -1372,8 +1524,23 @@ watch(() => room.url, (newUrl, oldUrl) => {
     isSettingOwnUrl = false;
     return;
   }
+  const isMkv = newUrl && (newUrl.toLowerCase().includes('.mkv') || decodeURIComponent(newUrl).toLowerCase().includes('.mkv'));
+  if (isMkv && !watchInDesktop.value) {
+    watchInDesktop.value = true;
+    localStorage.setItem('heartpeario_playback_mode', 'desktop');
+    doToast('MKV format detected — switched to Desktop Player (mpv/VLC)', 4000);
+  }
   nextTick(() => {
-    loadMediaSource(newUrl);
+    if (!watchInDesktop.value) {
+      loadMediaSource(newUrl);
+    } else {
+      cleanupHls();
+      clearLoadTimeout();
+      if (videoEl.value) {
+        videoEl.value.removeAttribute('src');
+        videoEl.value.load();
+      }
+    }
     lastLoadedUrl = newUrl;
   });
 });
@@ -1398,8 +1565,8 @@ function onVideoError(reason) {
     title = 'Stream Timed Out';
     hint = 'The stream took too long to respond. It may have CORS restrictions, require a login, or the link may have expired. Try another source or use the Desktop Player.';
   } else if (isMkv) {
-    title = 'MKV Format Not Supported';
-    hint = 'This stream is packaged in an MKV container. Web browsers cannot decode MKV/TrueHD/DTS natively. Please choose an MP4 or HLS stream, or use the Desktop Player companion.';
+    title = 'MKV Format Not Supported in Browser';
+    hint = 'This stream is packaged in an MKV container. Web browsers cannot decode MKV/TrueHD/DTS natively. Please switch to Desktop Player (mpv/VLC) for native playback.';
   } else if (err?.code === 4) { // MEDIA_ERR_SRC_NOT_SUPPORTED
     if (currentUrl.includes('file-examples.com')) {
       title = 'Sample Host Blocked (HTTP 403)';
@@ -1428,7 +1595,7 @@ function onVideoError(reason) {
 
 // ── Smart Synchronization Engine ──────────────────────────────────────────
 async function applySync(data) {
-  if (!videoEl.value || !data) return;
+  if (!data) return;
 
   if (data.seq && lastAppliedSeq && data.seq <= lastAppliedSeq) {
     return;
@@ -1438,19 +1605,23 @@ async function applySync(data) {
   const target = Math.max(0, data.time || 0);
   logDebug(`ApplySync #${data.seq || 0}: ${data.paused ? 'PAUSE' : 'PLAY'} at ${fmtTime(target)}`);
 
+  currentTime.value = target;
+
   if (data.paused) {
-    videoEl.value.pause();
-    if (Math.abs(videoEl.value.currentTime - target) > 0.4) {
-      videoEl.value.currentTime = target;
+    if (videoEl.value) {
+      videoEl.value.pause();
+      if (Math.abs(videoEl.value.currentTime - target) > 0.4) {
+        videoEl.value.currentTime = target;
+      }
     }
     paused.value = true;
-    updateCurrentStreamProgress(target, videoEl.value.duration);
+    updateCurrentStreamProgress(target, duration.value || (videoEl.value?.duration || 0));
   } else {
-    if (Math.abs(videoEl.value.currentTime - target) > 1.5) {
+    if (videoEl.value && Math.abs(videoEl.value.currentTime - target) > 1.5) {
       videoEl.value.currentTime = target;
     }
     paused.value = false;
-    if (!watchInDesktop.value) {
+    if (!watchInDesktop.value && videoEl.value) {
       try {
         await videoEl.value.play();
       } catch (err) {
@@ -1554,6 +1725,18 @@ async function onStreamSelected({ url, mediaMeta, subtitles, sources }) {
     } catch {}
   }
 
+  if (enrichedMeta?.runtime) {
+    duration.value = enrichedMeta.runtime * 60;
+  }
+
+  // Smart Format Protection
+  const isMkv = url && (url.toLowerCase().includes('.mkv') || decodeURIComponent(url).toLowerCase().includes('.mkv'));
+  if (isMkv && !watchInDesktop.value) {
+    watchInDesktop.value = true;
+    localStorage.setItem('heartpeario_playback_mode', 'desktop');
+    doToast('MKV stream detected — switched to Desktop Player (mpv/VLC)', 4000);
+  }
+
   // Flag so the room.url watcher skips the load (we do it manually below)
   isSettingOwnUrl = true;
   room.url = url;
@@ -1569,9 +1752,18 @@ async function onStreamSelected({ url, mediaMeta, subtitles, sources }) {
   }
   activeCues.value = [];
 
-  // Explicitly load the media (only once)
+  // Explicitly load the media (only if browser video is active)
   nextTick(() => {
-    loadMediaSource(url);
+    if (!watchInDesktop.value) {
+      loadMediaSource(url);
+    } else {
+      cleanupHls();
+      clearLoadTimeout();
+      if (videoEl.value) {
+        videoEl.value.removeAttribute('src');
+        videoEl.value.load();
+      }
+    }
     lastLoadedUrl = url;
   });
 
@@ -1669,6 +1861,14 @@ function onLoadDirectUrl(url) {
   const cleanTitle = decodeURIComponent(rawFile).replace(/[._-]/g, ' ').trim() || 'Direct Stream';
   const meta = { title: cleanTitle };
 
+  // Smart Format Protection
+  const isMkv = url.toLowerCase().includes('.mkv') || decodeURIComponent(url).toLowerCase().includes('.mkv');
+  if (isMkv && !watchInDesktop.value) {
+    watchInDesktop.value = true;
+    localStorage.setItem('heartpeario_playback_mode', 'desktop');
+    doToast('MKV direct stream detected — playing via Desktop Player (mpv/VLC)', 4000);
+  }
+
   // Flag so the room.url watcher skips the load (we do it manually below)
   isSettingOwnUrl = true;
   room.url = url;
@@ -1678,7 +1878,6 @@ function onLoadDirectUrl(url) {
   cachedSources.value = [{ url, name: cleanTitle, addonName: 'Direct URL' }];
   lastAppliedSeq = 0;
   streamFailed.value = false;
-  watchInDesktop.value = false;
 
   if (activeSubTrackBlobUrl.value) {
     URL.revokeObjectURL(activeSubTrackBlobUrl.value);
@@ -1686,9 +1885,18 @@ function onLoadDirectUrl(url) {
   }
   activeCues.value = [];
 
-  // Explicitly load the media (only once)
+  // Explicitly load the media (only if browser video is active)
   nextTick(() => {
-    loadMediaSource(url);
+    if (!watchInDesktop.value) {
+      loadMediaSource(url);
+    } else {
+      cleanupHls();
+      clearLoadTimeout();
+      if (videoEl.value) {
+        videoEl.value.removeAttribute('src');
+        videoEl.value.load();
+      }
+    }
     lastLoadedUrl = url;
   });
 
@@ -1868,8 +2076,22 @@ onMounted(async () => {
       // If joining a room with an existing stream, load it now.
       // (The room.url watcher no longer uses immediate:true, so we load explicitly.)
       if (data.url && data.url !== lastLoadedUrl) {
+        const isMkv = data.url.toLowerCase().includes('.mkv') || decodeURIComponent(data.url).toLowerCase().includes('.mkv');
+        if (isMkv && !watchInDesktop.value) {
+          watchInDesktop.value = true;
+          localStorage.setItem('heartpeario_playback_mode', 'desktop');
+        }
         nextTick(() => {
-          loadMediaSource(data.url);
+          if (!watchInDesktop.value) {
+            loadMediaSource(data.url);
+          } else {
+            cleanupHls();
+            clearLoadTimeout();
+            if (videoEl.value) {
+              videoEl.value.removeAttribute('src');
+              videoEl.value.load();
+            }
+          }
           lastLoadedUrl = data.url;
         });
       }
@@ -1910,13 +2132,20 @@ onMounted(async () => {
       room.player = { paused: true, time: 0, serverTime: Date.now() };
       paused.value = true;
       currentTime.value = 0;
-      duration.value = 0;
+      duration.value = (enrichedMeta?.runtime ? enrichedMeta.runtime * 60 : 0);
       lastAppliedSeq = 0;
       streamFailed.value = false;
 
       // Only update room.url and reload media if this is a different URL than what we already loaded.
       // This prevents the host from double-loading when the server echoes their own player.url back.
       const incomingUrl = data.url || null;
+      const isMkv = incomingUrl && (incomingUrl.toLowerCase().includes('.mkv') || decodeURIComponent(incomingUrl).toLowerCase().includes('.mkv'));
+      if (isMkv && !watchInDesktop.value) {
+        watchInDesktop.value = true;
+        localStorage.setItem('heartpeario_playback_mode', 'desktop');
+        doToast('MKV format detected — playing via Desktop Player (mpv/VLC)', 4000);
+      }
+
       const shouldReload = incomingUrl !== lastLoadedUrl;
       room.url = incomingUrl;
 
@@ -1925,7 +2154,16 @@ onMounted(async () => {
           updateAudioTracks();
         }
         if (shouldReload) {
-          loadMediaSource(incomingUrl);
+          if (!watchInDesktop.value) {
+            loadMediaSource(incomingUrl);
+          } else {
+            cleanupHls();
+            clearLoadTimeout();
+            if (videoEl.value) {
+              videoEl.value.removeAttribute('src');
+              videoEl.value.load();
+            }
+          }
           lastLoadedUrl = incomingUrl;
         }
       });
@@ -2000,14 +2238,20 @@ onMounted(async () => {
 
     socket.on('external_player.status', (data) => {
       externalPlayerState.value = data.state;
+      if (data.duration && typeof data.duration === 'number' && data.duration > 0) {
+        duration.value = Math.floor(data.duration);
+      }
       if (data.state === 'playing') {
         streamFailed.value = false;
+        paused.value = false;
         doToast(`🖥 ${data.player?.toUpperCase() || 'Player'} is playing in sync`);
+      } else if (data.state === 'paused') {
+        paused.value = true;
       } else if (data.state === 'error') {
         doToast(`⚠️ Desktop player reported error: ${data.reason || 'Failed to load stream'}`, 6000);
       } else if (data.state === 'connected') {
         streamFailed.value = false;
-        doToast(`🖥 Desktop player companion connected!`);
+        doToast(`🖥 Desktop player connected & handshaked!`);
       }
     }),
 
@@ -2022,9 +2266,10 @@ onMounted(async () => {
   ];
 
   heartbeatTimer = setInterval(() => {
-    if (videoEl.value && room.url) {
+    if (room.url) {
+      const curPos = watchInDesktop.value ? (currentTime.value || 0) : (videoEl.value?.currentTime || currentTime.value || 0);
       socket.send('player.ts', {
-        time: videoEl.value.currentTime,
+        time: curPos,
         buffering: buffering.value,
       });
     }
@@ -2038,6 +2283,7 @@ onMounted(async () => {
     document.removeEventListener('click', closeAllMenus);
     if (countdownInterval) clearInterval(countdownInterval);
     if (heartbeatTimer) clearInterval(heartbeatTimer);
+    if (desktopTicker) clearInterval(desktopTicker);
     clearTimeout(hideTimer);
     clearTimeout(toastTimer);
     if (activeSubTrackBlobUrl.value) {
@@ -3393,5 +3639,155 @@ onMounted(async () => {
   background: #3dbe7a;
   border-radius: 50%;
   box-shadow: 0 0 6px #3dbe7a;
+}
+
+/* Header Mode Pill */
+.mode-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  padding: 5px 10px !important;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+.mode-pill-btn.is-desktop-mode {
+  border-color: rgba(61, 190, 122, 0.35) !important;
+  color: #3dbe7a !important;
+  background: rgba(61, 190, 122, 0.08) !important;
+}
+.header-live-dot {
+  width: 6px;
+  height: 6px;
+  background: #3dbe7a;
+  border-radius: 50%;
+  box-shadow: 0 0 6px #3dbe7a;
+  margin-left: 2px;
+}
+
+/* Cinema Placeholder Mode Tip */
+.ph-mode-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 20px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ph-mode-status:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+.ph-mode-status strong {
+  color: #ffffff;
+}
+.active-dot-mini-ph {
+  color: #3dbe7a;
+  font-weight: 700;
+  font-size: 0.75rem;
+}
+.status-tip-ph {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* Stream Tags on Desktop Screen */
+.desktop-player-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.dtag {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #ffffff;
+}
+.dtag-quality {
+  background: rgba(224, 61, 90, 0.2);
+  border-color: rgba(224, 61, 90, 0.4);
+  color: #ff6b85;
+}
+.dtag-format {
+  background: rgba(61, 190, 122, 0.15);
+  border-color: rgba(61, 190, 122, 0.35);
+  color: #3dbe7a;
+}
+.dtag-audio {
+  background: rgba(168, 213, 255, 0.12);
+  border-color: rgba(168, 213, 255, 0.3);
+  color: #a8d5ff;
+}
+
+/* Quick Launch Command Box on Screen */
+.desktop-quick-launch-box {
+  background: rgba(10, 10, 14, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 10px 14px;
+  max-width: 540px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  backdrop-filter: blur(8px);
+}
+.quick-launch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.btn-copy-quick-cmd {
+  background: rgba(224, 61, 90, 0.2);
+  border: 1px solid rgba(224, 61, 90, 0.4);
+  color: #ff6b85;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-copy-quick-cmd:hover {
+  background: #e03d5a;
+  color: #ffffff;
+}
+.quick-cmd-text {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.76rem;
+  color: #a8d5ff;
+  word-break: break-all;
+  user-select: all;
+}
+
+/* Error Card Primary Button */
+.primary-err-action {
+  background: linear-gradient(135deg, rgba(61, 190, 122, 0.25) 0%, rgba(61, 190, 122, 0.15) 100%) !important;
+  border-color: rgba(61, 190, 122, 0.5) !important;
+  color: #3dbe7a !important;
+  font-weight: 700 !important;
+}
+.primary-err-action:hover {
+  background: #3dbe7a !important;
+  color: #ffffff !important;
 }
 </style>
