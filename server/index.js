@@ -77,6 +77,25 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Dynamic M3U Playlist Endpoint for Room (for VLC / mpv / IPTV players)
+  if (reqPath.startsWith('/api/room/') && reqPath.endsWith('/playlist.m3u')) {
+    const parts = reqPath.split('/');
+    const roomId = normalizeCode(parts[3] || '');
+    const targetRoom = rooms.get(roomId);
+    if (!targetRoom || !targetRoom.url) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=UTF-8', 'Access-Control-Allow-Origin': '*' });
+      return res.end('#EXTM3U\n# No active stream in room\n');
+    }
+    const title = targetRoom.mediaMeta?.title || 'HeartPeario Stream';
+    const m3u = `#EXTM3U\n#EXTINF:-1,${title}\n${targetRoom.url}\n`;
+    res.writeHead(200, {
+      'Content-Type': 'audio/x-mpegurl; charset=utf-8',
+      'Content-Disposition': `inline; filename="${roomId}.m3u"`,
+      'Access-Control-Allow-Origin': '*',
+    });
+    return res.end(m3u);
+  }
+
   let filePath = path.join(DIST_DIR, reqPath === '/' ? 'index.html' : reqPath);
 
   if (!filePath.startsWith(DIST_DIR)) {
@@ -158,6 +177,8 @@ function roomUsers(room) {
     name: u.name,
     color: u.color,
     isHost: u.id === room.hostId,
+    isExternalPlayer: !!u.isExternalPlayer,
+    playerType: u.playerType || null,
   }));
 }
 
@@ -363,6 +384,10 @@ wss.on('connection', (ws, req) => {
         const hostIsConnected = Array.from(room.clients.values()).some(u => u.id === room.hostId);
         if (!room.hostId || !hostIsConnected || room.clients.size === 0) {
           room.hostId = userId;
+        }
+        if (payload.isExternalPlayer) {
+          user.isExternalPlayer = true;
+          user.playerType = payload.playerType || 'mpv';
         }
         room.clients.set(ws, user);
         if (!room.tsMap) room.tsMap = new Map();

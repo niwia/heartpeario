@@ -169,6 +169,9 @@
                     <span v-if="u.id === room.you?.id" class="you-tag">(You)</span>
                   </span>
                   <span v-if="u.id === room.hostId" class="host-tag">HOST</span>
+                  <span v-if="u.isExternalPlayer" class="external-tag" style="font-size:0.65rem;font-weight:700;padding:1px 4px;border-radius:3px;background:rgba(61,190,122,0.2);color:#3dbe7a;border:1px solid rgba(61,190,122,0.4);margin-left:4px;">
+                    🖥 {{ u.playerType?.toUpperCase() || 'EXT' }}
+                  </span>
                 </div>
                 <div class="user-item-right">
                   <button
@@ -395,6 +398,10 @@
                 <Icon name="sources" size="16" />
                 <span>Choose Another Source</span>
               </button>
+              <button class="btn-err-action btn-open-external" @click="showExternalPlayerModal = true">
+                <Icon name="monitor" size="16" />
+                <span>Play in mpv / VLC</span>
+              </button>
               <button class="btn-err-action btn-open-search" @click="showSearchModal = true">
                 <Icon name="search" size="16" />
                 <span>Search Catalog</span>
@@ -523,6 +530,15 @@
                   </span>
                 </button>
 
+                <!-- External Player Sync (mpv / VLC) -->
+                <button
+                  class="ctrl-btn"
+                  @click="showExternalPlayerModal = true"
+                  title="External Player Sync (mpv / VLC)"
+                >
+                  <Icon name="monitor" size="18" />
+                </button>
+
                 <!-- Fullscreen Button -->
                 <button class="ctrl-btn" @click="toggleFullscreen" title="Fullscreen (F)">
                   <Icon name="fullscreen" size="18" />
@@ -593,6 +609,16 @@
       @unload="unloadCurrentVideo"
     />
 
+    <ExternalPlayerModal
+      v-if="showExternalPlayerModal"
+      :room-id="room.id"
+      :current-url="room.url || ''"
+      :media-meta="room.mediaMeta"
+      :current-time="currentTime"
+      :users="room.users"
+      @close="showExternalPlayerModal = false"
+    />
+
   </div>
 </template>
 
@@ -613,6 +639,7 @@ import SourcesModal from '@/components/SourcesModal.vue';
 import AudioTracksModal from '@/components/AudioTracksModal.vue';
 import SubtitlesModal from '@/components/SubtitlesModal.vue';
 import RecentMediaModal from '@/components/RecentMediaModal.vue';
+import ExternalPlayerModal from '@/components/ExternalPlayerModal.vue';
 
 const route = useRoute();
 const router = useRouter();
@@ -627,6 +654,7 @@ const showSourcesModal = ref(false);
 const showRecentModal = ref(false);
 const showAudioModal = ref(false);
 const showSubtitlesModal = ref(false);
+const showExternalPlayerModal = ref(false);
 const showJoinPrompt = ref(false);
 const showUsersMenu = ref(false);
 const showRoomCodeMenu = ref(false);
