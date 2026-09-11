@@ -2217,6 +2217,10 @@ onMounted(async () => {
       room.activeCountdown = null;
       room.player = data;
       applySync(data);
+      if (data.authorId !== room.userId && data.authorName) {
+        const actionStr = data.paused ? 'paused playback' : 'resumed playback';
+        doToast(`🖥 ${data.authorName} ${actionStr}`, 2500);
+      }
     }),
 
     socket.on('room.tsMap', ({ tsMap, hostId, paused: isRoomPaused }) => {
@@ -2237,21 +2241,31 @@ onMounted(async () => {
     }),
 
     socket.on('external_player.status', (data) => {
+      const prevState = externalPlayerState.value;
       externalPlayerState.value = data.state;
       if (data.duration && typeof data.duration === 'number' && data.duration > 0) {
         duration.value = Math.floor(data.duration);
       }
+      if (typeof data.time === 'number' && data.time >= 0) {
+        if (!isUserScrubbing.value && Math.abs(currentTime.value - data.time) > 2.0) {
+          currentTime.value = Math.floor(data.time);
+        }
+      }
       if (data.state === 'playing') {
         streamFailed.value = false;
         paused.value = false;
-        doToast(`🖥 ${data.player?.toUpperCase() || 'Player'} is playing in sync`);
+        if (prevState !== 'playing') {
+          doToast(`🖥 ${data.player?.toUpperCase() || 'Player'} is playing in sync`);
+        }
       } else if (data.state === 'paused') {
         paused.value = true;
       } else if (data.state === 'error') {
         doToast(`⚠️ Desktop player reported error: ${data.reason || 'Failed to load stream'}`, 6000);
       } else if (data.state === 'connected') {
         streamFailed.value = false;
-        doToast(`🖥 Desktop player connected & handshaked!`);
+        if (prevState !== 'connected') {
+          doToast(`🖥 Desktop player connected & handshaked!`);
+        }
       }
     }),
 

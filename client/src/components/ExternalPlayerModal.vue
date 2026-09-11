@@ -43,6 +43,9 @@
           <p class="section-desc">
             Play full native <strong>4K, 10-bit HEVC, MKV containers, Dolby Vision & Atmos</strong> in <strong>mpv</strong> or <strong>VLC</strong> while staying 100% in sync with everyone in the room.
           </p>
+          <div class="sync-features-banner">
+            <span class="feat-pill">🔄 <strong>Two-Way Sync:</strong> Play/Pause (Space) & Seeking (Arrow keys) inside your player sync the room</span>
+          </div>
 
           <div class="code-box-wrap">
             <div class="code-box-header">
@@ -435,8 +438,23 @@ function downloadM3u() {
 .section-desc {
   font-size: 0.8rem;
   color: var(--muted);
-  line-height: 1.4;
-  margin: 0 0 14px;
+  line-height: 1.45;
+  margin: 0 0 10px;
+}
+
+.sync-features-banner {
+  margin-bottom: 12px;
+}
+
+.feat-pill {
+  display: inline-block;
+  font-size: 0.75rem;
+  color: #3dbe7a;
+  background: rgba(61, 190, 122, 0.1);
+  border: 1px solid rgba(61, 190, 122, 0.3);
+  padding: 4px 10px;
+  border-radius: 6px;
+  line-height: 1.3;
 }
 
 .code-box-wrap {

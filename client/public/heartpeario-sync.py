@@ -136,10 +136,11 @@ class SimpleWebSocketClient:
 # ─── Player Controllers (mpv & VLC) ─────────────────────────────────────────
 
 class MpvController:
-    """Controls mpv via local JSON IPC socket."""
-    def __init__(self, ipc_path="/tmp/heartpeario-mpv.sock", on_status=None):
+    """Controls mpv via local JSON IPC socket with full bidirectional sync."""
+    def __init__(self, ipc_path="/tmp/heartpeario-mpv.sock", on_status=None, on_action=None):
         self.ipc_path = ipc_path
         self.on_status = on_status
+        self.on_action = on_action
         self.proc = None
         self.sock = None
         self.is_paused = True
@@ -147,6 +148,12 @@ class MpvController:
         self.current_title = None
         self.running = False
         self.listener_thread = None
+        self.last_time_pos = 0.0
+        self.duration = 0.0
+        self.ignore_pause_until = 0.0
+        self.ignore_seek_until = 0.0
+        self.in_seek = False
+        self.seek_debounce_timer = None
 
     def start(self, initial_url=None):
         if os.path.exists(self.ipc_path):
@@ -181,9 +188,23 @@ class MpvController:
         self.listener_thread = threading.Thread(target=self._read_events, daemon=True)
         self.listener_thread.start()
 
-        # Observe properties for live status and duration reporting
+        # Observe properties for live status, duration, pause state, and current playback position
         self.send_cmd(["observe_property", 1, "duration"])
         self.send_cmd(["observe_property", 2, "pause"])
+        self.send_cmd(["observe_property", 3, "time-pos"])
+
+    def _trigger_seek(self, seek_pos):
+        if self.seek_debounce_timer:
+            self.seek_debounce_timer.cancel()
+
+        def fire():
+            print_log("PLAYER", f"⏩ Seeked in mpv to {int(seek_pos)}s -> syncing room", "\033[93m")
+            if self.on_action:
+                self.on_action("SEEK", seek_pos)
+
+        self.seek_debounce_timer = threading.Timer(0.25, fire)
+        self.seek_debounce_timer.daemon = True
+        self.seek_debounce_timer.start()
 
     def _read_events(self):
         buf = ""
@@ -201,24 +222,76 @@ class MpvController:
                     try:
                         ev = json.loads(line)
                         event_name = ev.get("event")
-                        if event_name in ("file-loaded", "playback-restart"):
-                            print_log("PLAYER", f"▶ mpv stream ready: {self.current_title or 'Video'}", "\033[92m")
-                            if self.on_status:
-                                self.on_status("playing", {"title": self.current_title})
+                        
+                        if event_name == "seek":
+                            self.in_seek = True
+
+                        elif event_name in ("file-loaded", "playback-restart"):
+                            if event_name == "file-loaded":
+                                print_log("PLAYER", f"▶ mpv stream ready: {self.current_title or 'Video'}", "\033[92m")
+                                if self.on_status:
+                                    self.on_status("playing", {"title": self.current_title})
+                            if self.in_seek:
+                                self.in_seek = False
+                                if time.time() >= self.ignore_seek_until:
+                                    self._trigger_seek(self.last_time_pos)
+
                         elif event_name == "property-change":
                             p_name = ev.get("name")
                             p_data = ev.get("data")
+
                             if p_name == "duration" and p_data and self.on_status:
                                 try:
-                                    self.on_status("playing", {"duration": float(p_data)})
+                                    self.duration = float(p_data)
+                                    self.on_status("playing", {"duration": self.duration})
                                 except Exception:
                                     pass
+
+                            elif p_name == "time-pos" and p_data is not None:
+                                try:
+                                    cur = float(p_data)
+                                    time_jump = abs(cur - self.last_time_pos)
+                                    if time.time() >= self.ignore_seek_until:
+                                        if time_jump > 3.0 and not self.is_paused and not self.in_seek:
+                                            self._trigger_seek(cur)
+                                    self.last_time_pos = cur
+                                except Exception:
+                                    pass
+
+                            elif p_name == "pause" and p_data is not None:
+                                new_paused = bool(p_data)
+                                if time.time() < self.ignore_pause_until:
+                                    self.is_paused = new_paused
+                                else:
+                                    if new_paused != self.is_paused:
+                                        self.is_paused = new_paused
+                                        action = "PAUSE" if new_paused else "PLAY"
+                                        state_str = "⏸ PAUSED" if new_paused else "▶ PLAYING"
+                                        color = "\033[93m" if new_paused else "\033[92m"
+                                        print_log("PLAYER", f"{state_str} in mpv ({int(self.last_time_pos)}s) -> syncing room", color)
+                                        if self.on_action:
+                                            self.on_action(action, self.last_time_pos)
+                                        if self.on_status:
+                                            self.on_status("paused" if new_paused else "playing", {"time": self.last_time_pos})
+
                         elif event_name == "pause":
-                            if self.on_status:
-                                self.on_status("paused", {})
+                            if time.time() >= self.ignore_pause_until and not self.is_paused:
+                                self.is_paused = True
+                                print_log("PLAYER", f"⏸ PAUSED in mpv -> syncing room", "\033[93m")
+                                if self.on_action:
+                                    self.on_action("PAUSE", self.last_time_pos)
+                                if self.on_status:
+                                    self.on_status("paused", {"time": self.last_time_pos})
+
                         elif event_name == "unpause":
-                            if self.on_status:
-                                self.on_status("playing", {})
+                            if time.time() >= self.ignore_pause_until and self.is_paused:
+                                self.is_paused = False
+                                print_log("PLAYER", f"▶ PLAYING in mpv -> syncing room", "\033[92m")
+                                if self.on_action:
+                                    self.on_action("PLAY", self.last_time_pos)
+                                if self.on_status:
+                                    self.on_status("playing", {"time": self.last_time_pos})
+
                         elif event_name == "end-file":
                             reason = ev.get("reason")
                             if reason == "error":
@@ -243,6 +316,9 @@ class MpvController:
     def load_url(self, url, title=None):
         self.current_url = url
         self.current_title = title or "Video Stream"
+        self.ignore_pause_until = time.time() + 2.0
+        self.ignore_seek_until = time.time() + 2.0
+        self.last_time_pos = 0.0
         self.send_cmd(["loadfile", url, "replace"])
         if title:
             self.send_cmd(["set_property", "force-media-title", title])
@@ -250,13 +326,16 @@ class MpvController:
 
     def set_pause(self, paused):
         self.is_paused = paused
+        self.ignore_pause_until = time.time() + 0.8
         self.send_cmd(["set_property", "pause", paused])
 
     def seek(self, seconds):
+        self.last_time_pos = seconds
+        self.ignore_seek_until = time.time() + 1.2
         self.send_cmd(["seek", max(0, seconds), "absolute"])
 
     def get_time(self):
-        return 0
+        return self.last_time_pos
 
     def close(self):
         self.running = False
@@ -278,13 +357,20 @@ class MpvController:
 
 
 class VlcController:
-    """Controls VLC via RC (Remote Control) TCP interface."""
-    def __init__(self, port=4212):
+    """Controls VLC via RC (Remote Control) TCP interface with bidirectional sync."""
+    def __init__(self, port=4212, on_status=None, on_action=None):
         self.port = port
+        self.on_status = on_status
+        self.on_action = on_action
         self.proc = None
         self.sock = None
         self.is_paused = True
         self.current_url = None
+        self.running = False
+        self.last_time_pos = 0.0
+        self.ignore_pause_until = 0.0
+        self.ignore_seek_until = 0.0
+        self.poller_thread = None
 
     def start(self, initial_url=None):
         cmd = [
@@ -307,6 +393,59 @@ class VlcController:
             except Exception:
                 pass
 
+        self.running = True
+        self.poller_thread = threading.Thread(target=self._poll_vlc, daemon=True)
+        self.poller_thread.start()
+
+    def _poll_vlc(self):
+        while self.running and self.sock:
+            time.sleep(0.5)
+            try:
+                self.send_cmd("status")
+                self.send_cmd("get_time")
+                buf = ""
+                self.sock.settimeout(0.3)
+                try:
+                    while True:
+                        chunk = self.sock.recv(1024)
+                        if not chunk:
+                            break
+                        buf += chunk.decode('utf-8', errors='ignore')
+                        if "\n" in buf:
+                            break
+                except Exception:
+                    pass
+                self.sock.settimeout(None)
+
+                for line in buf.split("\n"):
+                    line = line.strip()
+                    if "state playing" in line:
+                        if time.time() >= self.ignore_pause_until and self.is_paused:
+                            self.is_paused = False
+                            print_log("PLAYER", f"▶ PLAYING in VLC ({int(self.last_time_pos)}s) -> syncing room", "\033[92m")
+                            if self.on_action:
+                                self.on_action("PLAY", self.last_time_pos)
+                            if self.on_status:
+                                self.on_status("playing", {"time": self.last_time_pos})
+                    elif "state paused" in line:
+                        if time.time() >= self.ignore_pause_until and not self.is_paused:
+                            self.is_paused = True
+                            print_log("PLAYER", f"⏸ PAUSED in VLC ({int(self.last_time_pos)}s) -> syncing room", "\033[93m")
+                            if self.on_action:
+                                self.on_action("PAUSE", self.last_time_pos)
+                            if self.on_status:
+                                self.on_status("paused", {"time": self.last_time_pos})
+                    elif line.isdigit():
+                        t = float(line)
+                        if time.time() >= self.ignore_seek_until:
+                            if abs(t - self.last_time_pos) > 3.0 and not self.is_paused:
+                                print_log("PLAYER", f"⏩ Seeked in VLC to {int(t)}s -> syncing room", "\033[93m")
+                                if self.on_action:
+                                    self.on_action("SEEK", t)
+                        self.last_time_pos = t
+            except Exception:
+                pass
+
     def send_cmd(self, line):
         if not self.sock:
             return
@@ -317,19 +456,28 @@ class VlcController:
 
     def load_url(self, url, title=None):
         self.current_url = url
+        self.ignore_pause_until = time.time() + 2.0
+        self.ignore_seek_until = time.time() + 2.0
+        self.last_time_pos = 0.0
         self.send_cmd(f"add {url}")
         self.set_pause(True)
 
     def set_pause(self, paused):
-        # VLC RC command 'pause' toggles pause state
         if self.is_paused != paused:
-            self.send_cmd("pause")
             self.is_paused = paused
+            self.ignore_pause_until = time.time() + 0.8
+            self.send_cmd("pause")
 
     def seek(self, seconds):
+        self.last_time_pos = seconds
+        self.ignore_seek_until = time.time() + 1.2
         self.send_cmd(f"seek {int(max(0, seconds))}")
 
+    def get_time(self):
+        return self.last_time_pos
+
     def close(self):
+        self.running = False
         try:
             if self.sock:
                 self.sock.close()
@@ -372,7 +520,7 @@ def main():
     display_name = args.name or f"Player ({player_choice.upper()})"
 
     print("═" * 65)
-    print(f" ❤️  HeartPeario External Player Sync")
+    print(f" ❤️  HeartPeario External Player Sync (Two-Way)")
     print(f" 📺 Player  : \033[92m{player_choice.upper()}\033[0m")
     print(f" 🚪 Room    : \033[93m{args.room.upper()}\033[0m")
     print(f" 🌐 Host    : {args.url}")
@@ -388,6 +536,8 @@ def main():
         print_log("ERROR", f"Failed to connect to {args.url}: {e}", "\033[91m")
         sys.exit(1)
 
+    my_user_id = None
+
     def handle_player_status(state, details=None):
         payload = {"state": state, "player": player_choice}
         if details:
@@ -397,11 +547,22 @@ def main():
         except Exception:
             pass
 
+    def handle_player_action(action, timestamp):
+        payload = {
+            "action": action,
+            "time": timestamp,
+            "player": player_choice,
+        }
+        try:
+            ws.send(json.dumps({"type": "external_player.action", "payload": payload}))
+        except Exception as e:
+            print_log("ERROR", f"Failed to send player action: {e}", "\033[91m")
+
     # Initialize Player Controller
     if player_choice == "mpv":
-        player = MpvController(on_status=handle_player_status)
+        player = MpvController(on_status=handle_player_status, on_action=handle_player_action)
     else:
-        player = VlcController()
+        player = VlcController(on_status=handle_player_status, on_action=handle_player_action)
 
     print_log("LAUNCH", f"Starting local {player_choice.upper()} instance...", "\033[96m")
     try:
@@ -424,8 +585,26 @@ def main():
     handle_player_status("connected")
 
     print_log("SYNC", f"Connected & synchronized with Room '{args.room.upper()}'!", "\033[92m")
-    print_log("INFO", "Stream changes, play/pause, and seeks in HeartPeario will control your player automatically.", "\033[90m")
+    print_log("INFO", "Two-way sync active: Play, Pause (Spacebar), and Seeking (Arrow keys) inside your player will sync the room.", "\033[92m")
     print_log("INFO", "Press Ctrl+C anytime to disconnect.\n", "\033[90m")
+
+    # Heartbeat thread for reporting position back to room tsMap
+    def heartbeat_worker():
+        while ws.connected:
+            time.sleep(2)
+            if player and player.running and not player.is_paused:
+                t = player.get_time()
+                if t > 0:
+                    try:
+                        ws.send(json.dumps({
+                            "type": "player.ts",
+                            "payload": {"time": t, "buffering": False}
+                        }))
+                    except Exception:
+                        pass
+
+    hb_thread = threading.Thread(target=heartbeat_worker, daemon=True)
+    hb_thread.start()
 
     # Main Event Loop
     try:
@@ -443,6 +622,7 @@ def main():
 
             # Initial room join
             if msg_type == "room.joined":
+                my_user_id = payload.get("you", {}).get("id")
                 url = payload.get("url")
                 meta = payload.get("mediaMeta") or {}
                 title = meta.get("title") or "Video Stream"
@@ -482,10 +662,16 @@ def main():
                 is_paused = payload.get("paused", True)
                 target_time = payload.get("time", 0)
                 author = payload.get("authorName") or "Room"
+                author_id = payload.get("authorId")
+                
+                # If this event was initiated by this companion player, skip self-seeking to avoid stutter
+                if author_id and author_id == my_user_id:
+                    continue
+
                 if is_paused:
-                    print_log("ACTION", f"⏸ PAUSE at {int(target_time)}s ({author})", "\033[93m")
+                    print_log("SYNC", f"⏸ PAUSE at {int(target_time)}s ({author})", "\033[93m")
                 else:
-                    print_log("ACTION", f"▶ PLAY at {int(target_time)}s ({author})", "\033[92m")
+                    print_log("SYNC", f"▶ PLAY at {int(target_time)}s ({author})", "\033[92m")
                 player.seek(target_time)
                 player.set_pause(is_paused)
 

@@ -713,7 +713,7 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
-      // External Desktop Player Status (handshake, playing, paused, error)
+      // External Desktop Player Status (handshake, playing, paused, error, duration, position)
       case 'external_player.status': {
         if (!room) break;
         const playerType = payload.player || user.playerType || 'mpv';
@@ -724,10 +724,48 @@ wss.on('connection', (ws, req) => {
           userName: user.name,
           player: playerType,
           state,
+          duration: typeof payload.duration === 'number' ? payload.duration : undefined,
+          time: typeof payload.time === 'number' ? payload.time : undefined,
           title: payload.title || room.mediaMeta?.title || '',
           reason: payload.reason || '',
           timestamp: Date.now(),
         });
+        break;
+      }
+
+      // External Desktop Player Playback Action (Play / Pause / Seek initiated from mpv or VLC)
+      case 'external_player.action': {
+        if (!room) break;
+        const action = payload.action; // 'PLAY' | 'PAUSE' | 'SEEK'
+        const rawTime = typeof payload.time === 'number' ? payload.time : (room.player?.time || 0);
+        const targetTime = Math.max(0, rawTime);
+        const player = (payload.player || 'desktop player').toUpperCase();
+        const now = Date.now();
+
+        if (room.countdownTimer) {
+          clearTimeout(room.countdownTimer);
+          room.countdownTimer = null;
+          room.activeCountdown = null;
+        }
+
+        room.seq = (room.seq || 0) + 1;
+        const isPaused = action === 'PAUSE' ? true : (action === 'PLAY' ? false : (room.player?.paused ?? false));
+        const authorDisplay = user.name.toLowerCase().includes(player.toLowerCase()) ? user.name : `${user.name} (${player})`;
+
+        room.player = {
+          paused: isPaused,
+          time: targetTime,
+          serverTime: now,
+          seq: room.seq,
+          authorId: userId,
+          authorName: authorDisplay,
+        };
+
+        const actionWord = action === 'PAUSE' ? 'paused' : (action === 'PLAY' ? 'resumed' : `seeked to ${formatTime(targetTime)}`);
+        logServer(`[Room ${room.id}] [External Action] ${user.name} ${actionWord} via ${player} at ${formatTime(targetTime)}`);
+
+        broadcastAll(room, 'player.sync', room.player);
+        broadcastSystemMessage(room, `🖥 ${authorDisplay} ${actionWord}`);
         break;
       }
 
