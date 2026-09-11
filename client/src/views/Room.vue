@@ -380,8 +380,43 @@
           </button>
         </div>
 
+        <!-- ── Desktop Player Synced Screen (Active when companion is connected) ── -->
+        <div
+          v-if="hasExternalCompanion && room.url"
+          class="desktop-player-overlay"
+          :style="pauseOverlayStyle"
+        >
+          <div class="desktop-player-content">
+            <div class="desktop-status-pill">
+              <span class="pulsing-radar-dot"></span>
+              <span>SYNCHRONIZED WITH {{ activeExternalCompanion?.playerType?.toUpperCase() || 'DESKTOP PLAYER' }}</span>
+            </div>
+            <h1 class="desktop-player-title">{{ room.mediaMeta?.title || 'Video Stream' }}</h1>
+            <p v-if="room.mediaMeta?.episodeTitle" class="desktop-player-ep">
+              {{ room.mediaMeta.episodeTitle }}
+            </p>
+            <p class="desktop-player-hint">
+              Video is playing on your desktop in <strong>{{ activeExternalCompanion?.playerType?.toUpperCase() || 'mpv' }}</strong> with full audio/video codecs and zero browser overhead.
+            </p>
+            <div class="desktop-player-stats">
+              <span class="stat-pill">⏱ {{ fmtTime(currentTime) }} / {{ fmtTime(duration) }}</span>
+              <span class="stat-pill">👥 {{ room.users?.length || 1 }} viewer(s) in room</span>
+              <span class="stat-pill status-live">🟢 {{ externalPlayerState === 'playing' ? 'Playing' : (externalPlayerState === 'paused' ? 'Paused' : 'Synced') }}</span>
+            </div>
+            <div class="desktop-player-actions">
+              <button class="btn-desktop-act" @click="showExternalPlayerModal = true">
+                <Icon name="monitor" size="16" />
+                <span>Player Options</span>
+              </button>
+              <button class="btn-desktop-act btn-sec" @click="watchingInExternalPlayer = false; streamFailed = false; loadMediaSource(room.url)">
+                <span>Switch to Browser Video</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- ── Stream Error / Dead Link Fallback Overlay ────────────── -->
-        <div v-if="streamFailed && room.url" class="stream-error-fallback">
+        <div v-if="streamFailed && room.url && !hasExternalCompanion" class="stream-error-fallback">
           <div class="stream-error-card">
             <div class="err-icon-pill">
               <Icon name="stop" size="24" />
@@ -533,10 +568,12 @@
                 <!-- External Player Sync (mpv / VLC) -->
                 <button
                   class="ctrl-btn"
+                  :class="{ 'btn-external-active': hasExternalCompanion }"
                   @click="showExternalPlayerModal = true"
-                  title="External Player Sync (mpv / VLC)"
+                  :title="hasExternalCompanion ? 'External Player Synced (Active)' : 'External Player Sync (mpv / VLC)'"
                 >
                   <Icon name="monitor" size="18" />
+                  <span v-if="hasExternalCompanion" class="active-dot-mini"></span>
                 </button>
 
                 <!-- Fullscreen Button -->
@@ -658,6 +695,12 @@ const showExternalPlayerModal = ref(false);
 const showJoinPrompt = ref(false);
 const showUsersMenu = ref(false);
 const showRoomCodeMenu = ref(false);
+
+const watchingInExternalPlayer = ref(false);
+const externalPlayerState = ref(null);
+const externalCompanions = computed(() => (room.users || []).filter(u => u.isExternalPlayer));
+const hasExternalCompanion = computed(() => externalCompanions.value.length > 0 || watchingInExternalPlayer.value);
+const activeExternalCompanion = computed(() => externalCompanions.value[0] || null);
 
 const joinNameInput = ref('');
 const newRoomCodeInput = ref('');
@@ -1176,24 +1219,30 @@ watch(() => room.url, (newUrl) => {
 }, { immediate: true });
 
 function onVideoError() {
+  if (hasExternalCompanion.value || watchingInExternalPlayer.value) {
+    streamFailed.value = false;
+    return;
+  }
+
   const err = videoEl.value?.error;
-  const currentUrl = room.url || '';
-  const metaTitle = room.mediaMeta?.title || '';
-  const isMkv = /\.mkv($|\?)/i.test(currentUrl) || /\.mkv/i.test(metaTitle);
+  const currentUrl = (room.url || '').toLowerCase();
+  
+  // ONLY check the actual stream URL for .mkv, never check metaTitle!
+  const isMkv = currentUrl.includes('.mkv') || currentUrl.includes('matroska');
 
   let title = 'Stream Playback Error';
   let reason = 'The stream could not be loaded or is unavailable from the provider.';
 
   if (isMkv) {
     title = 'MKV Format Not Supported';
-    reason = 'This stream is packaged in an MKV container. Web browsers cannot decode MKV/TrueHD/DTS natively (unlike desktop Stremio/mpv). Please choose an MP4 or HLS stream.';
+    reason = 'This stream is packaged in an MKV container. Web browsers cannot decode MKV/TrueHD/DTS natively (unlike desktop Stremio/mpv). Please choose an MP4 or HLS stream, or use the Desktop Player companion.';
   } else if (err?.code === 4) { // MEDIA_ERR_SRC_NOT_SUPPORTED
     if (currentUrl.includes('r2.cloudflarestorage.com') || currentUrl.includes('r2.dev')) {
       title = 'Stream Link Expired';
       reason = 'The temporary cloud storage link has expired (HTTP 403) or is restricted. Please select a fresher source.';
     } else {
       title = 'Format / Codec Unsupported';
-      reason = 'Your browser cannot play this stream format or audio codec (e.g. AC3/EAC3/DTS). Please try another source (e.g. MP4 or HLS).';
+      reason = 'Your browser cannot play this stream format or audio codec (e.g. AC3/EAC3/DTS). Please try another source or use Desktop Player (mpv).';
     }
   } else if (err?.code === 2) { // MEDIA_ERR_NETWORK
     title = 'Network Connection Error';
@@ -1207,7 +1256,7 @@ function onVideoError() {
   streamErrorTitle.value = title;
   streamErrorReason.value = reason;
   buffering.value = false;
-  doToast(`Could not load stream: ${title} - ${reason}`, 5000);
+  doToast(`Could not load stream: ${title}`, 4000);
 }
 
 // ── Smart Synchronization Engine ──────────────────────────────────────────
@@ -1234,12 +1283,11 @@ async function applySync(data) {
       videoEl.value.currentTime = target;
     }
     paused.value = false;
-    try {
-      await videoEl.value.play();
-    } catch (err) {
-      logDebug('Play error on applySync:', err?.message);
-      if (videoEl.value?.error || err?.name === 'NotSupportedError') {
-        onVideoError();
+    if (!hasExternalCompanion.value) {
+      try {
+        await videoEl.value.play();
+      } catch (err) {
+        logDebug('Play error on applySync:', err?.message);
       }
     }
   }
@@ -1738,6 +1786,19 @@ onMounted(async () => {
             videoEl.value.currentTime = hostPeer.time;
           }
         }
+      }
+    }),
+
+    socket.on('external_player.status', (data) => {
+      externalPlayerState.value = data.state;
+      if (data.state === 'playing') {
+        streamFailed.value = false;
+        doToast(`🖥 ${data.player?.toUpperCase() || 'Player'} is playing in sync`);
+      } else if (data.state === 'error') {
+        doToast(`⚠️ Desktop player reported error: ${data.reason || 'Failed to load stream'}`, 6000);
+      } else if (data.state === 'connected') {
+        streamFailed.value = false;
+        doToast(`🖥 Desktop player companion connected!`);
       }
     }),
 
@@ -2935,4 +2996,137 @@ onMounted(async () => {
 @keyframes slide-down { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes slide-up { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Desktop Player Synced Screen ─────────────────────────────────────────── */
+.desktop-player-overlay {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 30% 45%, rgba(13, 20, 32, 0.94) 0%, rgba(5, 7, 12, 0.98) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+  z-index: 14;
+  animation: fade-in 0.25s ease both;
+}
+.desktop-player-content {
+  max-width: 650px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 14px;
+}
+.desktop-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  background: rgba(61, 190, 122, 0.15);
+  border: 1px solid rgba(61, 190, 122, 0.35);
+  color: #3dbe7a;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pulsing-radar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3dbe7a;
+  box-shadow: 0 0 0 0 rgba(61, 190, 122, 0.7);
+  animation: radar-pulse 1.8s infinite;
+}
+@keyframes radar-pulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(61, 190, 122, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(61, 190, 122, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(61, 190, 122, 0); }
+}
+.desktop-player-title {
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.9);
+}
+.desktop-player-ep {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+.desktop-player-hint {
+  font-size: 0.92rem;
+  color: rgba(255, 255, 255, 0.75);
+  max-width: 520px;
+  line-height: 1.5;
+}
+.desktop-player-stats {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 4px;
+}
+.stat-pill {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+.status-live {
+  color: #3dbe7a;
+  border-color: rgba(61, 190, 122, 0.3);
+}
+.desktop-player-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.btn-desktop-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.btn-desktop-act:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+.btn-desktop-act.btn-sec {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+.btn-desktop-act.btn-sec:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.btn-external-active {
+  color: #3dbe7a !important;
+  position: relative;
+}
+.active-dot-mini {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  background: #3dbe7a;
+  border-radius: 50%;
+  box-shadow: 0 0 6px #3dbe7a;
+}
 </style>

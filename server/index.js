@@ -551,6 +551,24 @@ wss.on('connection', (ws, req) => {
         break;
       }
 
+      // External Desktop Player Status (handshake, playing, paused, error)
+      case 'external_player.status': {
+        if (!room) break;
+        const playerType = payload.player || user.playerType || 'mpv';
+        const state = payload.state || 'active';
+        logServer(`[Room ${room.id}] External player status from ${user.name}: ${state.toUpperCase()} (${playerType.toUpperCase()})`);
+        broadcastAll(room, 'external_player.status', {
+          userId,
+          userName: user.name,
+          player: playerType,
+          state,
+          title: payload.title || room.mediaMeta?.title || '',
+          reason: payload.reason || '',
+          timestamp: Date.now(),
+        });
+        break;
+      }
+
       // Chat
       case 'room.message': {
         if (!room) break;

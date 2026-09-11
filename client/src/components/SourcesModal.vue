@@ -65,7 +65,7 @@
         <div v-else class="sources-list">
           <div
             v-for="(s, idx) in sortedSources"
-            :key="s.url || idx"
+            :key="s.url || s.externalUrl || idx"
             class="source-card"
             :class="{
               active: currentUrl === (s.url || s.externalUrl),
@@ -74,22 +74,25 @@
             @click="selectSource(s)"
           >
             <div class="source-left">
-              <div class="addon-badge">{{ s.addonName || 'Addon' }}</div>
               <div class="source-meta">
                 <div class="source-name-row">
-                  <span class="source-name">{{ s.name || s.title || 'Stream ' + (idx + 1) }}</span>
-                  <span v-if="extractQuality(s)" class="quality-pill" :class="qualityClass(extractQuality(s))">
-                    {{ extractQuality(s) }}
+                  <span class="addon-badge">{{ s.addonName || 'Addon' }}</span>
+                  <span v-if="parseStreamInfo(s).quality" class="quality-pill" :class="qualityClass(parseStreamInfo(s).quality)">
+                    {{ parseStreamInfo(s).quality }}
                   </span>
                   <!-- Format Pill -->
-                  <span v-if="getStreamFormat(s) === 'mkv'" class="format-pill format-mkv" title="MKV container - not natively playable in web browsers">
+                  <span v-if="parseStreamInfo(s).format === 'mkv'" class="format-pill format-mkv" title="MKV container - plays via Desktop Player (mpv/VLC)">
                     MKV (Desktop only)
                   </span>
-                  <span v-else-if="getStreamFormat(s) === 'hls'" class="format-pill format-hls" title="HLS adaptive streaming playlist">
+                  <span v-else-if="parseStreamInfo(s).format === 'hls'" class="format-pill format-hls" title="HLS adaptive streaming playlist">
                     HLS
                   </span>
-                  <span v-else-if="getStreamFormat(s) === 'mp4'" class="format-pill format-mp4" title="Direct MP4 stream">
+                  <span v-else class="format-pill format-mp4" title="Direct MP4 stream - browser compatible">
                     MP4
+                  </span>
+                  <!-- Size Badge -->
+                  <span v-if="parseStreamInfo(s).size" class="size-pill">
+                    💾 {{ parseStreamInfo(s).size }}
                   </span>
                   <!-- Stream Health Badge -->
                   <span
@@ -121,8 +124,34 @@
                     UNAVAILABLE
                   </span>
                 </div>
-                <span v-if="s.title && s.name !== s.title" class="source-details">{{ s.title }}</span>
-                <span v-else-if="s.details" class="source-details">{{ s.details }}</span>
+
+                <!-- Release / File Title -->
+                <div class="source-file-title" :title="parseStreamInfo(s).filename">
+                  {{ parseStreamInfo(s).filename }}
+                </div>
+
+                <!-- Tags and Details Row -->
+                <div class="source-details-row">
+                  <span v-for="tag in parseStreamInfo(s).videoTags" :key="tag" class="tag-pill tag-video">
+                    {{ tag }}
+                  </span>
+                  <span v-for="aud in parseStreamInfo(s).audioBadges" :key="aud" class="tag-pill tag-audio">
+                    {{ aud }}
+                  </span>
+                  <span v-if="parseStreamInfo(s).languages" class="tag-pill tag-lang">
+                    🗣 {{ parseStreamInfo(s).languages }}
+                  </span>
+                  <span v-for="prov in parseStreamInfo(s).providerMatches" :key="prov" class="tag-pill tag-prov">
+                    {{ prov }}
+                  </span>
+                </div>
+
+                <!-- Remaining lines if any -->
+                <div v-if="parseStreamInfo(s).remainingLines?.length" class="source-extra-lines">
+                  <span v-for="(line, lIdx) in parseStreamInfo(s).remainingLines" :key="lIdx" class="extra-line">
+                    {{ line }}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -157,7 +186,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
 import { useAddonsStore } from '@/stores/addons';
-import { fetchStreamsProgressive } from '@/services/stremio.service';
+import { fetchStreamsProgressive, parseStreamInfo } from '@/services/stremio.service';
 import Icon from '@/components/Icon.vue';
 
 const props = defineProps({
@@ -203,18 +232,7 @@ const filteredSources = computed(() => {
 });
 
 function getStreamFormat(s) {
-  const url = s.url || s.externalUrl || '';
-  const title = (s.title || s.name || '').toLowerCase();
-  if (/\.mkv($|\?)/i.test(url) || title.includes('.mkv') || title.includes('remux') || title.includes('bluray')) {
-    return 'mkv';
-  }
-  if (/\.m3u8($|\?)/i.test(url) || url.includes('/direct/external/') || url.includes('m3u8')) {
-    return 'hls';
-  }
-  if (/\.mp4($|\?)/i.test(url) || title.includes('.mp4')) {
-    return 'mp4';
-  }
-  return null;
+  return parseStreamInfo(s).format;
 }
 
 // Sort sources: browser-compatible (HLS/MP4) first, MKV/Desktop lower, dead streams last
@@ -331,7 +349,7 @@ onMounted(() => {
 }
 
 .modal-card {
-  width: min(560px, 100%);
+  width: min(680px, 100%);
   max-height: 84vh;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -523,16 +541,17 @@ onMounted(() => {
 
 .source-left {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
+  flex: 1;
   overflow: hidden;
 }
 .addon-badge {
-  font-size: 0.65rem;
+  font-size: 0.68rem;
   font-weight: 700;
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  color: #ffffff;
+  color: var(--gold, #f5c518);
+  background: rgba(245, 197, 24, 0.12);
+  border: 1px solid rgba(245, 197, 24, 0.25);
   padding: 2px 6px;
   border-radius: 4px;
   flex-shrink: 0;
@@ -542,26 +561,20 @@ onMounted(() => {
 .source-meta {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  flex: 1;
   overflow: hidden;
 }
 .source-name-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-}
-.source-name {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: #ffffff;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .quality-pill {
   font-size: 0.65rem;
   font-weight: 800;
-  padding: 1px 4px;
+  padding: 1px 5px;
   border-radius: 3px;
   letter-spacing: 0.02em;
 }
@@ -569,6 +582,39 @@ onMounted(() => {
 .q-1080 { background: rgba(90, 125, 224, 0.2); color: #5a7de0; border: 1px solid rgba(90, 125, 224, 0.4); }
 .q-720 { background: rgba(61, 190, 122, 0.2); color: #3dbe7a; border: 1px solid rgba(61, 190, 122, 0.4); }
 .q-sd { background: rgba(255, 255, 255, 0.1); color: var(--muted); border: 1px solid var(--border); }
+
+.format-pill {
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+}
+.format-mkv {
+  background: rgba(168, 85, 247, 0.18);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.35);
+}
+.format-hls {
+  background: rgba(6, 182, 212, 0.18);
+  color: #22d3ee;
+  border: 1px solid rgba(6, 182, 212, 0.35);
+}
+.format-mp4 {
+  background: rgba(34, 197, 94, 0.18);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
+.size-pill {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
 
 .health-pill {
   font-size: 0.62rem;
@@ -598,35 +644,44 @@ onMounted(() => {
   border: 1px solid var(--border);
 }
 
-.format-pill {
-  font-size: 0.62rem;
+.source-file-title {
+  font-size: 0.86rem;
   font-weight: 700;
-  padding: 1px 5px;
-  border-radius: 3px;
-  letter-spacing: 0.02em;
-}
-.format-mkv {
-  background: rgba(224, 168, 61, 0.15);
-  color: #e0a83d;
-  border: 1px solid rgba(224, 168, 61, 0.4);
-}
-.format-hls {
-  background: rgba(61, 189, 224, 0.15);
-  color: #3dbde0;
-  border: 1px solid rgba(61, 189, 224, 0.4);
-}
-.format-mp4 {
-  background: rgba(160, 61, 224, 0.15);
-  color: #c476f5;
-  border: 1px solid rgba(160, 61, 224, 0.4);
+  color: #ffffff;
+  word-break: break-word;
+  line-height: 1.35;
 }
 
-.source-details {
+.source-details-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.tag-pill {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+}
+.tag-video { color: #60a5fa; border-color: rgba(96, 165, 250, 0.25); }
+.tag-audio { color: #f472b6; border-color: rgba(244, 114, 182, 0.25); }
+.tag-lang { color: #fbbf24; border-color: rgba(251, 191, 36, 0.25); }
+.tag-prov { color: #a78bfa; border-color: rgba(167, 139, 250, 0.25); }
+
+.source-extra-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.extra-line {
   font-size: 0.72rem;
   color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
 }
 
 .source-right {

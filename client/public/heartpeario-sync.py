@@ -137,8 +137,9 @@ class SimpleWebSocketClient:
 
 class MpvController:
     """Controls mpv via local JSON IPC socket."""
-    def __init__(self, ipc_path="/tmp/heartpeario-mpv.sock"):
+    def __init__(self, ipc_path="/tmp/heartpeario-mpv.sock", on_status=None):
         self.ipc_path = ipc_path
+        self.on_status = on_status
         self.proc = None
         self.sock = None
         self.is_paused = True
@@ -198,11 +199,21 @@ class MpvController:
                         event_name = ev.get("event")
                         if event_name in ("file-loaded", "playback-restart"):
                             print_log("PLAYER", f"▶ mpv stream ready: {self.current_title or 'Video'}", "\033[92m")
+                            if self.on_status:
+                                self.on_status("playing", {"title": self.current_title})
+                        elif event_name == "pause":
+                            if self.on_status:
+                                self.on_status("paused", {})
+                        elif event_name == "unpause":
+                            if self.on_status:
+                                self.on_status("playing", {})
                         elif event_name == "end-file":
                             reason = ev.get("reason")
                             if reason == "error":
                                 print_log("ERROR", "mpv could not open stream: HTTP 404 / expired link / forbidden by host.", "\033[91m")
                                 print_log("HINT", "Please select another source in the HeartPeario web room.", "\033[93m")
+                                if self.on_status:
+                                    self.on_status("error", {"reason": "Stream link 404 or unsupported"})
                     except Exception:
                         pass
             except Exception:
@@ -356,9 +367,27 @@ def main():
     print(f" 👤 User    : {display_name}")
     print("═" * 65)
 
+    # Connect WebSocket
+    ws = SimpleWebSocketClient(args.url)
+    try:
+        print_log("NETWORK", f"Connecting to HeartPeario WebSocket...", "\033[94m")
+        ws.connect()
+    except Exception as e:
+        print_log("ERROR", f"Failed to connect to {args.url}: {e}", "\033[91m")
+        sys.exit(1)
+
+    def handle_player_status(state, details=None):
+        payload = {"state": state, "player": player_choice}
+        if details:
+            payload.update(details)
+        try:
+            ws.send(json.dumps({"type": "external_player.status", "payload": payload}))
+        except Exception:
+            pass
+
     # Initialize Player Controller
     if player_choice == "mpv":
-        player = MpvController()
+        player = MpvController(on_status=handle_player_status)
     else:
         player = VlcController()
 
@@ -367,16 +396,7 @@ def main():
         player.start()
     except Exception as e:
         print_log("ERROR", f"Failed to start player: {e}", "\033[91m")
-        sys.exit(1)
-
-    # Connect WebSocket
-    ws = SimpleWebSocketClient(args.url)
-    try:
-        print_log("NETWORK", f"Connecting to HeartPeario WebSocket...", "\033[94m")
-        ws.connect()
-    except Exception as e:
-        print_log("ERROR", f"Failed to connect to {args.url}: {e}", "\033[91m")
-        player.close()
+        ws.close()
         sys.exit(1)
 
     # Send User Name and Join
@@ -389,6 +409,7 @@ def main():
             "playerType": player_choice,
         }
     }))
+    handle_player_status("connected")
 
     print_log("SYNC", f"Connected & synchronized with Room '{args.room.upper()}'!", "\033[92m")
     print_log("INFO", "Stream changes, play/pause, and seeks in HeartPeario will control your player automatically.", "\033[90m")

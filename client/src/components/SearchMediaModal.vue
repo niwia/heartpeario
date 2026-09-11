@@ -170,27 +170,90 @@
               </button>
             </div>
 
-            <div v-if="filteredStreams.length" class="streams-list">
+            <div v-if="sortedStreams.length" class="streams-list">
               <div
-                v-for="(st, idx) in filteredStreams"
-                :key="idx"
+                v-for="(st, idx) in sortedStreams"
+                :key="st.url || idx"
                 class="stream-card"
+                :class="{
+                  'is-dead': healthMap[st.url || st.externalUrl]?.online === false
+                }"
                 @click="chooseStream(st)"
               >
                 <div class="stream-left">
-                  <div class="stream-provider-row">
-                    <span class="stream-provider">{{ st.addonName || 'Addon' }}</span>
-                    <span v-if="extractQuality(st)" class="quality-pill" :class="qualityClass(extractQuality(st))">
-                      {{ extractQuality(st) }}
+                  <!-- Badges Top Row -->
+                  <div class="stream-badge-row">
+                    <span class="addon-badge">{{ st.addonName || 'Addon' }}</span>
+                    <span v-if="parseStreamInfo(st).quality" class="quality-pill" :class="qualityClass(parseStreamInfo(st).quality)">
+                      {{ parseStreamInfo(st).quality }}
+                    </span>
+                    <!-- Format Badge -->
+                    <span v-if="parseStreamInfo(st).format === 'mkv'" class="format-pill format-mkv" title="MKV container - plays via Desktop Player (mpv/VLC)">
+                      MKV (Desktop only)
+                    </span>
+                    <span v-else-if="parseStreamInfo(st).format === 'hls'" class="format-pill format-hls" title="HLS adaptive stream - playable in browser">
+                      HLS
+                    </span>
+                    <span v-else class="format-pill format-mp4" title="MP4 stream - playable in browser">
+                      MP4
+                    </span>
+                    <!-- Size Badge -->
+                    <span v-if="parseStreamInfo(st).size" class="size-pill">
+                      💾 {{ parseStreamInfo(st).size }}
+                    </span>
+                    <!-- Health Badge -->
+                    <span
+                      v-if="healthMap[st.url || st.externalUrl]?.online === true"
+                      class="health-pill health-ok"
+                    >
+                      ONLINE
+                    </span>
+                    <span
+                      v-else-if="healthMap[st.url || st.externalUrl]?.status === 403"
+                      class="health-pill health-expired"
+                    >
+                      EXPIRED 403
+                    </span>
+                    <span
+                      v-else-if="healthMap[st.url || st.externalUrl]?.status === 404"
+                      class="health-pill health-dead"
+                    >
+                      DEAD 404
                     </span>
                   </div>
-                  <div class="stream-title">{{ st.name || st.title || 'Direct Stream' }}</div>
-                  <div v-if="st.description" class="stream-desc">{{ st.description }}</div>
+
+                  <!-- Release / File Title -->
+                  <div class="stream-file-title" :title="parseStreamInfo(st).filename">
+                    {{ parseStreamInfo(st).filename }}
+                  </div>
+
+                  <!-- Tags and Details Row -->
+                  <div class="stream-details-row">
+                    <span v-for="tag in parseStreamInfo(st).videoTags" :key="tag" class="tag-pill tag-video">
+                      {{ tag }}
+                    </span>
+                    <span v-for="aud in parseStreamInfo(st).audioBadges" :key="aud" class="tag-pill tag-audio">
+                      {{ aud }}
+                    </span>
+                    <span v-if="parseStreamInfo(st).languages" class="tag-pill tag-lang">
+                      🗣 {{ parseStreamInfo(st).languages }}
+                    </span>
+                    <span v-for="prov in parseStreamInfo(st).providerMatches" :key="prov" class="tag-pill tag-prov">
+                      {{ prov }}
+                    </span>
+                  </div>
+
+                  <!-- Remaining lines if any -->
+                  <div v-if="parseStreamInfo(st).remainingLines?.length" class="stream-extra-lines">
+                    <span v-for="(line, lIdx) in parseStreamInfo(st).remainingLines" :key="lIdx" class="extra-line">
+                      {{ line }}
+                    </span>
+                  </div>
                 </div>
 
                 <button class="btn-play-stream" title="Stream in room for everyone">
                   <Icon name="play" size="14" />
-                  <span>Play for Room</span>
+                  <span>Play</span>
                 </button>
               </div>
             </div>
@@ -214,9 +277,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue';
+import { ref, computed, watch, onMounted, nextTick } from 'vue';
 import { useAddonsStore } from '@/stores/addons';
-import { searchCatalog, getMeta, fetchStreamsProgressive, fetchSubtitlesProgressive } from '@/services/stremio.service';
+import { searchCatalog, getMeta, fetchStreamsProgressive, fetchSubtitlesProgressive, parseStreamInfo } from '@/services/stremio.service';
 import Icon from '@/components/Icon.vue';
 
 const emit = defineEmits(['close', 'selectStream']);
@@ -237,6 +300,24 @@ const loadingStreams = ref(false);
 const availableStreams = ref([]);
 const availableSubtitles = ref([]);
 const selectedAddonFilter = ref('all');
+const healthMap = ref({});
+
+async function probeStreamHealth(url) {
+  if (!url || healthMap.value[url]) return;
+  healthMap.value[url] = { checking: true };
+  try {
+    const basePath = window.location.pathname.startsWith('/watchpear2') ? '/watchpear2' : '';
+    const res = await fetch(`${basePath}/api/probe?url=${encodeURIComponent(url)}`);
+    if (res.ok) {
+      const data = await res.json();
+      healthMap.value[url] = { checking: false, online: data.online, status: data.status };
+    } else {
+      healthMap.value[url] = { checking: false, online: null };
+    }
+  } catch {
+    healthMap.value[url] = { checking: false, online: null };
+  }
+}
 
 let searchDebounce = null;
 
@@ -257,6 +338,31 @@ const filteredStreams = computed(() => {
   if (selectedAddonFilter.value === 'all') return availableStreams.value;
   return availableStreams.value.filter(s => (s.addonName || 'Addon') === selectedAddonFilter.value);
 });
+
+const sortedStreams = computed(() => {
+  const list = [...filteredStreams.value];
+  return list.sort((a, b) => {
+    const urlA = a.url || a.externalUrl;
+    const urlB = b.url || b.externalUrl;
+    const deadA = healthMap.value[urlA]?.online === false ? 1 : 0;
+    const deadB = healthMap.value[urlB]?.online === false ? 1 : 0;
+    if (deadA !== deadB) return deadA - deadB;
+
+    const fmtA = parseStreamInfo(a).format;
+    const fmtB = parseStreamInfo(b).format;
+    const mkvA = fmtA === 'mkv' ? 1 : 0;
+    const mkvB = fmtB === 'mkv' ? 1 : 0;
+    return mkvA - mkvB;
+  });
+});
+
+watch(sortedStreams, (list) => {
+  if (!list?.length) return;
+  list.slice(0, 10).forEach(st => {
+    const url = st.url || st.externalUrl;
+    if (url) probeStreamHealth(url);
+  });
+}, { immediate: true });
 
 const seasonsList = computed(() => {
   if (!fullMeta.value?.videos?.length) return [];
@@ -864,43 +970,116 @@ onMounted(() => {
   overflow: hidden;
 }
 
-.stream-provider-row {
+.stream-badge-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
 }
-.stream-provider {
-  font-size: 0.75rem;
+.addon-badge {
+  font-size: 0.72rem;
   font-weight: 700;
   color: var(--gold);
+  background: rgba(245, 197, 24, 0.12);
+  border: 1px solid rgba(245, 197, 24, 0.25);
+  padding: 2px 7px;
+  border-radius: 4px;
   text-transform: uppercase;
 }
-
-.quality-pill {
+.format-pill {
   font-size: 0.7rem;
   font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
+.format-mkv {
+  background: rgba(168, 85, 247, 0.18);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.35);
+}
+.format-hls {
+  background: rgba(6, 182, 212, 0.18);
+  color: #22d3ee;
+  border: 1px solid rgba(6, 182, 212, 0.35);
+}
+.format-mp4 {
+  background: rgba(34, 197, 94, 0.18);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+.size-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+.health-pill {
+  font-size: 0.68rem;
+  font-weight: 800;
   padding: 2px 6px;
   border-radius: 4px;
 }
-.q-4k { background: #e03d98; color: #fff; }
-.q-1080 { background: #3d7ee0; color: #fff; }
-.q-720 { background: #3dbe7a; color: #fff; }
-.q-sd { background: var(--border-light); color: var(--muted); }
-
-.stream-title {
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.health-ok {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.4);
 }
-.stream-desc {
-  font-size: 0.78rem;
+.health-expired {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.4);
+}
+.health-dead {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+.stream-file-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: #ffffff;
+  word-break: break-word;
+  line-height: 1.35;
+  margin-top: 2px;
+}
+.stream-details-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.tag-pill {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+}
+.tag-video { color: #60a5fa; border-color: rgba(96, 165, 250, 0.25); }
+.tag-audio { color: #f472b6; border-color: rgba(244, 114, 182, 0.25); }
+.tag-lang { color: #fbbf24; border-color: rgba(251, 191, 36, 0.25); }
+.tag-prov { color: #a78bfa; border-color: rgba(167, 139, 250, 0.25); }
+.stream-extra-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 3px;
+}
+.extra-line {
+  font-size: 0.75rem;
   color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+.is-dead {
+  opacity: 0.55;
+  border-color: rgba(239, 68, 68, 0.25) !important;
 }
 
 .btn-play-stream {

@@ -205,3 +205,84 @@ function hasResource(addon, resourceName, type) {
     return false;
   });
 }
+
+/**
+ * Parse raw Stremio addon stream metadata into structured badges
+ */
+export function parseStreamInfo(st) {
+  if (!st) return { filename: 'Stream', format: 'mp4', videoTags: [], audioBadges: [], providerMatches: [], remainingLines: [] };
+  const name = st.name || '';
+  const title = st.title || '';
+  const desc = st.description || '';
+  const rawText = `${name}\n${title}\n${desc}`;
+  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+
+  // File or release name (e.g. Salt (2010).mkv or Memories.of.Murder.2003...)
+  const fileLine = lines.find(l => /\.(mkv|mp4|avi|webm|ts|m3u8)/i.test(l));
+  const filename = fileLine || lines[0] || 'Direct Stream';
+
+  // Size (e.g. 2.20 GB, 952 MB)
+  const sizeMatch = rawText.match(/(\d+(?:\.\d+)?\s*(?:GB|MB|GiB|MiB))/i);
+  const size = sizeMatch ? sizeMatch[1].toUpperCase() : null;
+
+  // Languages (e.g. English, Hindi, Multi)
+  const langMatch = rawText.match(/(?:🗣|audio|lang|languages?)[:\s]*([^\n•]+)/i);
+  let languages = langMatch ? langMatch[1].trim() : null;
+  if (!languages && /hindi/i.test(rawText) && /english/i.test(rawText)) languages = 'English, Hindi';
+  else if (!languages && /english/i.test(rawText)) languages = 'English';
+
+  // Audio Codecs
+  const audioBadges = [];
+  if (/atmos/i.test(rawText)) audioBadges.push('Dolby Atmos');
+  else if (/truehd/i.test(rawText)) audioBadges.push('TrueHD');
+  else if (/dts-hd|dts/i.test(rawText)) audioBadges.push('DTS');
+  else if (/dd\+?5\.1|eac3|ac3|5\.1/i.test(rawText)) audioBadges.push('5.1 Audio');
+  else if (/aac/i.test(rawText)) audioBadges.push('AAC');
+
+  // Video / Source Tags
+  const videoTags = [];
+  if (/remux/i.test(rawText)) videoTags.push('REMUX');
+  if (/bluray|bdrip/i.test(rawText)) videoTags.push('BluRay');
+  else if (/web-?dl|webrip/i.test(rawText)) videoTags.push('WEB-DL');
+  if (/dovi|dolby\s*vision|dv/i.test(rawText)) videoTags.push('DV');
+  if (/hdr10\+|hdr/i.test(rawText)) videoTags.push('HDR');
+  if (/10bit|hevc|x265/i.test(rawText)) videoTags.push('10-bit');
+  if (/x264|h\.264|avc/i.test(rawText)) videoTags.push('x264');
+
+  // Provider Host / Extra Info (e.g. HDHub4u, Workers, Torrentio, RD+)
+  const providerMatches = [];
+  if (/hdhub4u/i.test(rawText)) providerMatches.push('HDHub4u');
+  if (/workers/i.test(rawText)) providerMatches.push('⚡ Workers');
+  if (/debrid|realdebrid|rd\+/i.test(rawText)) providerMatches.push('⚡ Debrid');
+
+  // Container Format
+  const url = (st.url || st.externalUrl || '').toLowerCase();
+  let format = 'mp4';
+  if (url.includes('.m3u8') || url.includes('/direct/external/') || rawText.toLowerCase().includes('.m3u8')) {
+    format = 'hls';
+  } else if (url.includes('.mkv') || rawText.toLowerCase().includes('.mkv')) {
+    format = 'mkv';
+  }
+
+  // Quality label
+  let quality = '';
+  const qText = rawText.toUpperCase();
+  if (qText.includes('4K') || qText.includes('2160P')) quality = '4K';
+  else if (qText.includes('1080P')) quality = '1080p';
+  else if (qText.includes('720P')) quality = '720p';
+  else if (qText.includes('480P') || qText.includes('360P')) quality = 'SD';
+
+  const remainingLines = lines.filter(l => l !== filename && !l.includes(filename) && !l.includes(st.name || '___')).slice(0, 3);
+
+  return {
+    filename,
+    size,
+    languages,
+    audioBadges,
+    videoTags,
+    providerMatches,
+    format,
+    quality,
+    remainingLines,
+  };
+}
