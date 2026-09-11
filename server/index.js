@@ -44,16 +44,28 @@ const server = http.createServer((req, res) => {
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 4000);
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Range': 'bytes=0-0',
+    };
 
     fetch(targetUrl, {
       method: 'HEAD',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Range': 'bytes=0-0',
-      },
+      headers,
       signal: controller.signal,
-    }).then(response => {
+    }).then(async response => {
       clearTimeout(timeout);
+      if (response.status === 405) {
+        try {
+          const getCtrl = new AbortController();
+          const getTimeout = setTimeout(() => getCtrl.abort(), 3000);
+          const getRes = await fetch(targetUrl, { method: 'GET', headers, signal: getCtrl.signal });
+          clearTimeout(getTimeout);
+          const isOnline = getRes.status >= 200 && getRes.status < 400;
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+          return res.end(JSON.stringify({ online: isOnline, status: getRes.status }));
+        } catch {}
+      }
       const isOnline = response.status >= 200 && response.status < 400;
       res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       res.end(JSON.stringify({ online: isOnline, status: response.status }));

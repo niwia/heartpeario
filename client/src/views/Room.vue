@@ -290,10 +290,8 @@
         <video
           v-show="room.url"
           ref="videoEl"
-          :src="room.url || undefined"
           preload="auto"
           playsinline
-          crossorigin="anonymous"
           @click="togglePlay"
           @timeupdate="onTimeUpdate"
           @durationchange="onDurationChange"
@@ -385,9 +383,9 @@
             <div class="err-icon-pill">
               <Icon name="stop" size="24" />
             </div>
-            <h3 class="err-title">Stream Link Dead (404 / Expired)</h3>
+            <h3 class="err-title">{{ streamErrorTitle || 'Stream Playback Error' }}</h3>
             <p class="err-sub">
-              {{ streamErrorReason || 'The stream host returned an error or expired link.' }}
+              {{ streamErrorReason || 'The stream host returned an error or unsupported format.' }}
             </p>
             <p class="err-hint">
               Choose another stream source or provider for <strong>{{ room.mediaMeta?.title || 'this video' }}</strong>.
@@ -601,6 +599,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import Hls from 'hls.js';
 import { useRoomStore } from '@/stores/room';
 import { useProfileStore } from '@/stores/profile';
 import socket from '@/services/socket';
@@ -640,6 +639,7 @@ const playerWrapEl = ref(null);
 const detectedAudioTracks = ref([]);
 const cachedSources = ref([]);
 const streamFailed = ref(false);
+const streamErrorTitle = ref('Stream Playback Error');
 const streamErrorReason = ref('');
 
 // ── Smart Subtitle Overlay State ──────────────────────────────────────────
@@ -1046,18 +1046,129 @@ function onCanPlay() {
   }
 }
 
+// ── HLS & Media Engine ──────────────────────────────────────────────────
+let hlsInstance = null;
+
+function cleanupHls() {
+  if (hlsInstance) {
+    try {
+      hlsInstance.destroy();
+    } catch {}
+    hlsInstance = null;
+  }
+}
+
+function isHlsUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  const clean = url.trim().toLowerCase();
+  if (clean.includes('.m3u8')) return true;
+  if (clean.includes('/direct/external/')) return true;
+  if (clean.includes('/hls/')) return true;
+  return false;
+}
+
+function loadMediaSource(url) {
+  if (!videoEl.value) return;
+  cleanupHls();
+  streamFailed.value = false;
+  streamErrorTitle.value = '';
+  streamErrorReason.value = '';
+
+  if (!url) {
+    videoEl.value.removeAttribute('src');
+    videoEl.value.load();
+    return;
+  }
+
+  const isHls = isHlsUrl(url);
+
+  if (isHls) {
+    if (videoEl.value.canPlayType('application/vnd.apple.mpegurl')) {
+      // Native Apple HLS (Safari, iOS)
+      videoEl.value.src = url;
+    } else if (Hls.isSupported()) {
+      hlsInstance = new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        backBufferLength: 90,
+      });
+
+      hlsInstance.loadSource(url);
+      hlsInstance.attachMedia(videoEl.value);
+
+      hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+        logDebug(`[HLS Error] ${data.type} - ${data.details} (fatal: ${data.fatal})`);
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              logDebug('[HLS] Network error encountered, attempting recovery...');
+              hlsInstance.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              logDebug('[HLS] Media error encountered, attempting recovery...');
+              hlsInstance.recoverMediaError();
+              break;
+            default:
+              cleanupHls();
+              onVideoError();
+              break;
+          }
+        }
+      });
+    } else {
+      streamFailed.value = true;
+      streamErrorTitle.value = 'HLS Not Supported';
+      streamErrorReason.value = 'Your browser does not support HLS streaming playback.';
+      buffering.value = false;
+      return;
+    }
+  } else {
+    // Direct media file (MP4, WebM, etc.)
+    videoEl.value.src = url;
+  }
+
+  videoEl.value.load();
+}
+
+watch(() => room.url, (newUrl) => {
+  nextTick(() => {
+    loadMediaSource(newUrl);
+  });
+}, { immediate: true });
+
 function onVideoError() {
   const err = videoEl.value?.error;
-  let reason = 'Stream link is dead or unavailable from provider';
-  if (err?.code === 4) { // MEDIA_ERR_SRC_NOT_SUPPORTED
-    reason = 'Provider stream returned 404 / Dead link. Please choose an alternative source.';
+  const currentUrl = room.url || '';
+  const metaTitle = room.mediaMeta?.title || '';
+  const isMkv = /\.mkv($|\?)/i.test(currentUrl) || /\.mkv/i.test(metaTitle);
+
+  let title = 'Stream Playback Error';
+  let reason = 'The stream could not be loaded or is unavailable from the provider.';
+
+  if (isMkv) {
+    title = 'MKV Format Not Supported';
+    reason = 'This stream is packaged in an MKV container. Web browsers cannot decode MKV/TrueHD/DTS natively (unlike desktop Stremio/mpv). Please choose an MP4 or HLS stream.';
+  } else if (err?.code === 4) { // MEDIA_ERR_SRC_NOT_SUPPORTED
+    if (currentUrl.includes('r2.cloudflarestorage.com') || currentUrl.includes('r2.dev')) {
+      title = 'Stream Link Expired';
+      reason = 'The temporary cloud storage link has expired (HTTP 403) or is restricted. Please select a fresher source.';
+    } else {
+      title = 'Format / Codec Unsupported';
+      reason = 'Your browser cannot play this stream format or audio codec (e.g. AC3/EAC3/DTS). Please try another source (e.g. MP4 or HLS).';
+    }
   } else if (err?.code === 2) { // MEDIA_ERR_NETWORK
-    reason = 'Network connection failed while reaching provider.';
+    title = 'Network Connection Error';
+    reason = 'Network connection failed while reaching provider stream host.';
+  } else if (err?.code === 3) { // MEDIA_ERR_DECODE
+    title = 'Media Decode Error';
+    reason = 'An error occurred while decoding this video track.';
   }
+
   streamFailed.value = true;
+  streamErrorTitle.value = title;
   streamErrorReason.value = reason;
   buffering.value = false;
-  doToast(`Could not load stream: ${reason}`, 5000);
+  doToast(`Could not load stream: ${title} - ${reason}`, 5000);
 }
 
 // ── Smart Synchronization Engine ──────────────────────────────────────────
@@ -1621,6 +1732,7 @@ onMounted(async () => {
   }, 1000);
 
   onUnmounted(() => {
+    cleanupHls();
     offs.forEach(off => off());
     document.removeEventListener('keydown', onKeyDown);
     document.removeEventListener('click', closeAllMenus);

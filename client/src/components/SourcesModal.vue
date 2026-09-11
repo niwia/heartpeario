@@ -81,6 +81,16 @@
                   <span v-if="extractQuality(s)" class="quality-pill" :class="qualityClass(extractQuality(s))">
                     {{ extractQuality(s) }}
                   </span>
+                  <!-- Format Pill -->
+                  <span v-if="getStreamFormat(s) === 'mkv'" class="format-pill format-mkv" title="MKV container - not natively playable in web browsers">
+                    MKV (Desktop only)
+                  </span>
+                  <span v-else-if="getStreamFormat(s) === 'hls'" class="format-pill format-hls" title="HLS adaptive streaming playlist">
+                    HLS
+                  </span>
+                  <span v-else-if="getStreamFormat(s) === 'mp4'" class="format-pill format-mp4" title="Direct MP4 stream">
+                    MP4
+                  </span>
                   <!-- Stream Health Badge -->
                   <span
                     v-if="healthMap[s.url || s.externalUrl]?.online === true"
@@ -90,11 +100,25 @@
                     ONLINE
                   </span>
                   <span
-                    v-else-if="healthMap[s.url || s.externalUrl]?.online === false"
+                    v-else-if="healthMap[s.url || s.externalUrl]?.status === 403"
+                    class="health-pill health-expired"
+                    title="Stream link expired or forbidden (403)"
+                  >
+                    EXPIRED 403
+                  </span>
+                  <span
+                    v-else-if="healthMap[s.url || s.externalUrl]?.status === 404"
                     class="health-pill health-dead"
-                    title="Stream link returned 404 or dead"
+                    title="Stream link returned 404 Not Found"
                   >
                     DEAD 404
+                  </span>
+                  <span
+                    v-else-if="healthMap[s.url || s.externalUrl]?.online === false"
+                    class="health-pill health-unavailable"
+                    :title="'Stream link unavailable: ' + (healthMap[s.url || s.externalUrl]?.status || healthMap[s.url || s.externalUrl]?.error || 'Failed')"
+                  >
+                    UNAVAILABLE
                   </span>
                 </div>
                 <span v-if="s.title && s.name !== s.title" class="source-details">{{ s.title }}</span>
@@ -178,7 +202,22 @@ const filteredSources = computed(() => {
   return allSources.value.filter(s => (s.addonName || 'Addon') === selectedAddonFilter.value);
 });
 
-// Sort sources so verified dead streams are at the bottom
+function getStreamFormat(s) {
+  const url = s.url || s.externalUrl || '';
+  const title = (s.title || s.name || '').toLowerCase();
+  if (/\.mkv($|\?)/i.test(url) || title.includes('.mkv') || title.includes('remux') || title.includes('bluray')) {
+    return 'mkv';
+  }
+  if (/\.m3u8($|\?)/i.test(url) || url.includes('/direct/external/') || url.includes('m3u8')) {
+    return 'hls';
+  }
+  if (/\.mp4($|\?)/i.test(url) || title.includes('.mp4')) {
+    return 'mp4';
+  }
+  return null;
+}
+
+// Sort sources: browser-compatible (HLS/MP4) first, MKV/Desktop lower, dead streams last
 const sortedSources = computed(() => {
   const list = [...filteredSources.value];
   return list.sort((a, b) => {
@@ -186,7 +225,11 @@ const sortedSources = computed(() => {
     const urlB = b.url || b.externalUrl;
     const deadA = healthMap.value[urlA]?.online === false ? 1 : 0;
     const deadB = healthMap.value[urlB]?.online === false ? 1 : 0;
-    return deadA - deadB;
+    if (deadA !== deadB) return deadA - deadB;
+
+    const mkvA = getStreamFormat(a) === 'mkv' ? 1 : 0;
+    const mkvB = getStreamFormat(b) === 'mkv' ? 1 : 0;
+    return mkvA - mkvB;
   });
 });
 
@@ -543,6 +586,39 @@ onMounted(() => {
   background: rgba(224, 61, 90, 0.15);
   color: #e03d5a;
   border: 1px solid rgba(224, 61, 90, 0.3);
+}
+.health-expired {
+  background: rgba(224, 168, 61, 0.15);
+  color: #e0a83d;
+  border: 1px solid rgba(224, 168, 61, 0.3);
+}
+.health-unavailable {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+.format-pill {
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.02em;
+}
+.format-mkv {
+  background: rgba(224, 168, 61, 0.15);
+  color: #e0a83d;
+  border: 1px solid rgba(224, 168, 61, 0.4);
+}
+.format-hls {
+  background: rgba(61, 189, 224, 0.15);
+  color: #3dbde0;
+  border: 1px solid rgba(61, 189, 224, 0.4);
+}
+.format-mp4 {
+  background: rgba(160, 61, 224, 0.15);
+  color: #c476f5;
+  border: 1px solid rgba(160, 61, 224, 0.4);
 }
 
 .source-details {
