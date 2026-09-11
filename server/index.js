@@ -77,6 +77,167 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // ── HLS Playlist Proxy ────────────────────────────────────────────────────
+  // Fetches an .m3u8 playlist server-side, adds CORS headers, and rewrites
+  // all segment/sub-playlist URLs so hls.js routes every request through us.
+  // This solves CORS failures on streams that work in Stremio but block browsers.
+  if (reqPath === '/api/hls-proxy' || reqPath.endsWith('/api/hls-proxy')) {
+    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const targetUrl = parsedUrl.searchParams.get('url');
+
+    if (!targetUrl) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ error: 'Missing url parameter' }));
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const upstream = await fetch(targetUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Origin': new URL(targetUrl).origin,
+          'Referer': new URL(targetUrl).origin + '/',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (!upstream.ok) {
+        res.writeHead(upstream.status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        return res.end(JSON.stringify({ error: `Upstream returned ${upstream.status}` }));
+      }
+
+      const text = await upstream.text();
+      const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
+      const basePath = reqPath.startsWith('/watchpear2') ? '/watchpear2' : '';
+
+      // Rewrite each URI line in the m3u8 so every segment/sub-playlist
+      // is fetched through our own proxy instead of directly from the CDN.
+      const rewritten = text.split('\n').map(line => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return line;
+
+        let absUrl;
+        try {
+          absUrl = new URL(trimmed, baseUrl).href;
+        } catch {
+          return line;
+        }
+
+        // Sub-playlists (.m3u8) → route through hls-proxy; segments → stream-proxy
+        if (absUrl.includes('.m3u8') || absUrl.includes('m3u8')) {
+          return `${basePath}/api/hls-proxy?url=${encodeURIComponent(absUrl)}`;
+        }
+        return `${basePath}/api/stream-proxy?url=${encodeURIComponent(absUrl)}`;
+      }).join('\n');
+
+      res.writeHead(200, {
+        'Content-Type': 'application/vnd.apple.mpegurl',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Cache-Control': 'no-cache',
+      });
+      return res.end(rewritten);
+    } catch (err) {
+      clearTimeout(timeout);
+      res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ error: err.message || 'Proxy fetch failed' }));
+    }
+  }
+
+  // ── Generic Stream Segment Proxy ─────────────────────────────────────────
+  // Pipes any stream URL (video segments, keys, etc.) through the server,
+  // forwarding byte-range requests and preserving content-type.
+  if (reqPath === '/api/stream-proxy' || reqPath.endsWith('/api/stream-proxy')) {
+    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const targetUrl = parsedUrl.searchParams.get('url');
+
+    if (!targetUrl) {
+      res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      return res.end(JSON.stringify({ error: 'Missing url parameter' }));
+    }
+
+    const proxyHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+    };
+    try {
+      proxyHeaders['Origin'] = new URL(targetUrl).origin;
+      proxyHeaders['Referer'] = new URL(targetUrl).origin + '/';
+    } catch {}
+
+    // Forward byte-range requests from hls.js
+    if (req.headers['range']) {
+      proxyHeaders['Range'] = req.headers['range'];
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+
+    try {
+      const upstream = await fetch(targetUrl, {
+        headers: proxyHeaders,
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      const responseHeaders = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+        'Cache-Control': 'no-cache',
+      };
+
+      const contentType = upstream.headers.get('content-type');
+      if (contentType) responseHeaders['Content-Type'] = contentType;
+      const contentLength = upstream.headers.get('content-length');
+      if (contentLength) responseHeaders['Content-Length'] = contentLength;
+      const contentRange = upstream.headers.get('content-range');
+      if (contentRange) responseHeaders['Content-Range'] = contentRange;
+
+      res.writeHead(upstream.status, responseHeaders);
+
+      // Stream the body
+      if (upstream.body) {
+        const reader = upstream.body.getReader();
+        const pump = async () => {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) { res.end(); break; }
+            if (!res.write(value)) {
+              await new Promise(resolve => res.once('drain', resolve));
+            }
+          }
+        };
+        pump().catch(() => res.end());
+      } else {
+        res.end();
+      }
+      return;
+    } catch (err) {
+      clearTimeout(timeout);
+      if (!res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        res.end(JSON.stringify({ error: err.message || 'Proxy fetch failed' }));
+      }
+      return;
+    }
+  }
+
+  // Handle OPTIONS preflight
+  if (req.method === 'OPTIONS' && (reqPath.includes('/api/hls-proxy') || reqPath.includes('/api/stream-proxy'))) {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+      'Access-Control-Allow-Headers': 'Range, Content-Type',
+    });
+    return res.end();
+  }
+
   // Dynamic M3U Playlist Endpoint for Room (for VLC / mpv / IPTV players)
   if (reqPath.startsWith('/api/room/') && reqPath.endsWith('/playlist.m3u')) {
     const parts = reqPath.split('/');
@@ -95,6 +256,7 @@ const server = http.createServer((req, res) => {
     });
     return res.end(m3u);
   }
+
 
   let filePath = path.join(DIST_DIR, reqPath === '/' ? 'index.html' : reqPath);
 

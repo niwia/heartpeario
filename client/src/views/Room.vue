@@ -425,7 +425,7 @@
         <!-- ── Stream Error / Dead Link Fallback Overlay (Dismissible) ────────────── -->
         <div v-if="streamFailed && room.url && !watchInDesktop" class="stream-error-fallback">
           <div class="stream-error-card">
-            <button class="err-close-btn" @click="streamFailed = false" title="Dismiss">
+            <button class="err-close-btn" @click="streamFailed = false; streamCorsBlocked = false" title="Dismiss">
               <Icon name="close" size="16" />
             </button>
             <div class="err-icon-pill">
@@ -439,6 +439,16 @@
               Choose another stream source or provider for <strong>{{ room.mediaMeta?.title || 'this video' }}</strong>.
             </p>
             <div class="err-actions">
+              <!-- CORS-blocked streams get an explicit proxy opt-in button -->
+              <button
+                v-if="streamCorsBlocked && streamProxyUrl"
+                class="btn-err-action btn-proxy-stream"
+                @click="loadViaProxy"
+                title="Route through HeartPeario server (uses server egress bandwidth)"
+              >
+                <Icon name="play" size="16" />
+                <span>Try via Server Proxy</span>
+              </button>
               <button class="btn-err-action btn-choose-sources" @click="showSourcesModal = true">
                 <Icon name="sources" size="16" />
                 <span>Choose Another Source</span>
@@ -454,6 +464,7 @@
             </div>
           </div>
         </div>
+
 
         <!-- Clean Pure-Text Media Title Top Overlay (No Border/No Box) -->
         <div v-if="room.mediaMeta && !controlsHidden && room.url && !streamFailed" class="media-title-overlay">
@@ -724,6 +735,8 @@ const cachedSources = ref([]);
 const streamFailed = ref(false);
 const streamErrorTitle = ref('Stream Playback Error');
 const streamErrorReason = ref('');
+const streamCorsBlocked = ref(false);  // true when CORS check failed — shows proxy option
+const streamProxyUrl = ref('');        // the proxy URL ready to load if user opts in
 
 // ── Smart Subtitle Overlay State ──────────────────────────────────────────
 const activeCues = ref([]);
@@ -907,6 +920,11 @@ let hideTimer = null;
 let toastTimer = null;
 let heartbeatTimer = null;
 let lastAppliedSeq = 0;
+
+// Track the last URL we intentionally loaded to avoid double-loading
+// when our own player.url broadcast bounces back from the server.
+let lastLoadedUrl = null;
+let isSettingOwnUrl = false;
 
 const hostDisplayName = computed(() => {
   if (room.isHost) return 'You';
@@ -1113,12 +1131,14 @@ function onWaiting() {
 }
 
 function onPlaying() {
+  clearLoadTimeout();
   buffering.value = false;
   paused.value = false;
   streamFailed.value = false;
 }
 
 function onCanPlay() {
+  clearLoadTimeout();
   buffering.value = false;
   streamFailed.value = false;
   if (videoEl.value) {
@@ -1131,6 +1151,8 @@ function onCanPlay() {
 
 // ── HLS & Media Engine ──────────────────────────────────────────────────
 let hlsInstance = null;
+let hlsNetworkRetries = 0;
+const HLS_MAX_NETWORK_RETRIES = 3;
 
 function cleanupHls() {
   if (hlsInstance) {
@@ -1139,6 +1161,8 @@ function cleanupHls() {
     } catch {}
     hlsInstance = null;
   }
+  hlsNetworkRetries = 0;
+  clearLoadTimeout();
 }
 
 function isHlsUrl(url) {
@@ -1150,12 +1174,60 @@ function isHlsUrl(url) {
   return false;
 }
 
+function getProxyBase() {
+  const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+  return base;
+}
+
+let loadTimeoutId = null;
+
+function clearLoadTimeout() {
+  if (loadTimeoutId) {
+    clearTimeout(loadTimeoutId);
+    loadTimeoutId = null;
+  }
+}
+
+function setLoadTimeout(ms, label) {
+  clearLoadTimeout();
+  loadTimeoutId = setTimeout(() => {
+    loadTimeoutId = null;
+    logDebug(`[Timeout] ${label} timed out after ${ms}ms`);
+    // Only fire if we're still in a loading/buffering state
+    if (buffering.value || (!paused.value && !streamFailed.value)) {
+      onVideoError('timeout');
+    } else if (!paused.value && duration.value === 0) {
+      onVideoError('timeout');
+    }
+  }, ms);
+}
+
+async function checkHlsCors(url) {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5000);
+    const res = await fetch(url, {
+      method: 'HEAD',
+      mode: 'cors',
+      signal: ctrl.signal,
+    });
+    clearTimeout(t);
+    return res.ok || res.status < 400;
+  } catch (e) {
+    // TypeError from fetch = CORS blocked or network error
+    return false;
+  }
+}
+
 function loadMediaSource(url) {
   if (!videoEl.value) return;
   cleanupHls();
+  clearLoadTimeout();
   streamFailed.value = false;
   streamErrorTitle.value = '';
   streamErrorReason.value = '';
+  streamCorsBlocked.value = false;
+  streamProxyUrl.value = '';
 
   if (!url) {
     videoEl.value.removeAttribute('src');
@@ -1167,70 +1239,147 @@ function loadMediaSource(url) {
 
   if (isHls) {
     if (videoEl.value.canPlayType('application/vnd.apple.mpegurl')) {
-      // Native Apple HLS (Safari, iOS)
+      // Native Apple HLS (Safari, iOS) — no CORS concern
       videoEl.value.src = url;
       videoEl.value.load();
+      setLoadTimeout(20000, 'Native HLS');
     } else if (Hls.isSupported()) {
-      hlsInstance = new Hls({
-        enableWorker: true,
-        lowLatencyMode: false,
-        backBufferLength: 90,
-      });
-
-      hlsInstance.loadSource(url);
-      hlsInstance.attachMedia(videoEl.value);
-
-      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
-        logDebug('[HLS] Manifest parsed successfully');
-        if (videoEl.value) {
-          duration.value = videoEl.value.duration;
-          updateAudioTracks();
-        }
-        if (!paused.value) {
-          videoEl.value.play().catch(() => {});
-        }
-      });
-
-      hlsInstance.on(Hls.Events.ERROR, (event, data) => {
-        logDebug(`[HLS Error] ${data.type} - ${data.details} (fatal: ${data.fatal})`);
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              logDebug('[HLS] Network error encountered, attempting recovery...');
-              hlsInstance.startLoad();
-              break;
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              logDebug('[HLS] Media error encountered, attempting recovery...');
-              hlsInstance.recoverMediaError();
-              break;
-            default:
-              cleanupHls();
-              onVideoError();
-              break;
-          }
-        }
-      });
+      // Try direct first; if CORS fails, auto-retry via server proxy
+      loadHlsWithFallback(url);
     } else {
       streamFailed.value = true;
       streamErrorTitle.value = 'HLS Not Supported';
       streamErrorReason.value = 'Your browser does not support HLS streaming playback.';
       buffering.value = false;
-      return;
     }
   } else {
     // Direct media file (MP4, WebM, etc.)
     videoEl.value.src = url;
     videoEl.value.load();
+    setLoadTimeout(15000, 'Direct stream');
   }
 }
 
-watch(() => room.url, (newUrl) => {
+async function loadHlsWithFallback(url) {
+  // Quick CORS check: can the browser fetch this m3u8 directly?
+  const corsOk = await checkHlsCors(url);
+  logDebug(`[HLS] CORS check for ${url.slice(0, 60)}...: ${corsOk ? 'OK' : 'BLOCKED'}`);
+
+  if (corsOk) {
+    attachHlsInstance(url);
+  } else {
+    // CORS is blocked. Don't auto-proxy — that would route ALL stream data through
+    // the VM and burn egress bandwidth. Show an error with an opt-in "Try via Proxy" button.
+    logDebug('[HLS] CORS blocked — showing opt-in proxy option');
+    clearLoadTimeout();
+    const proxyUrl = `${getProxyBase()}/api/hls-proxy?url=${encodeURIComponent(url)}`;
+    streamCorsBlocked.value = true;
+    streamProxyUrl.value = proxyUrl;
+    streamFailed.value = true;
+    streamErrorTitle.value = 'Stream Blocked by CORS';
+    streamErrorReason.value = 'This stream host does not allow direct browser playback (CORS restriction). It works in Stremio because Stremio is a desktop app. You can try routing it through the HeartPeario server — note this uses server bandwidth.';
+    buffering.value = false;
+  }
+}
+
+function loadViaProxy() {
+  if (!streamProxyUrl.value) return;
+  streamFailed.value = false;
+  streamCorsBlocked.value = false;
+  attachHlsInstance(streamProxyUrl.value);
+  streamProxyUrl.value = '';
+}
+
+function attachHlsInstance(url) {
+  if (!videoEl.value) return;
+  cleanupHls();
+
+  hlsInstance = new Hls({
+    enableWorker: true,
+    lowLatencyMode: false,
+    backBufferLength: 90,
+    manifestLoadingTimeOut: 12000,
+    manifestLoadingMaxRetry: 2,
+    levelLoadingTimeOut: 12000,
+    levelLoadingMaxRetry: 2,
+    fragLoadingTimeOut: 20000,
+    fragLoadingMaxRetry: 2,
+    xhrSetup: (xhr) => {
+      xhr.withCredentials = false;
+    },
+  });
+
+  hlsInstance.loadSource(url);
+  hlsInstance.attachMedia(videoEl.value);
+
+  // 20-second timeout — fires if manifest never parses
+  setLoadTimeout(20000, 'HLS manifest');
+
+  hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+    clearLoadTimeout();
+    logDebug('[HLS] Manifest parsed successfully');
+    if (videoEl.value) {
+      duration.value = videoEl.value.duration;
+      updateAudioTracks();
+    }
+    if (!paused.value) {
+      videoEl.value.play().catch(() => {});
+    }
+  });
+
+  hlsInstance.on(Hls.Events.FRAG_LOADED, () => {
+    // First segment loaded — reset the timeout
+    clearLoadTimeout();
+  });
+
+  hlsInstance.on(Hls.Events.ERROR, (event, data) => {
+    logDebug(`[HLS Error] ${data.type} - ${data.details} (fatal: ${data.fatal})`);
+    if (data.fatal) {
+      switch (data.type) {
+        case Hls.ErrorTypes.NETWORK_ERROR:
+          hlsNetworkRetries++;
+          if (hlsNetworkRetries <= HLS_MAX_NETWORK_RETRIES) {
+            logDebug(`[HLS] Network error, recovery attempt ${hlsNetworkRetries}/${HLS_MAX_NETWORK_RETRIES}...`);
+            hlsInstance.startLoad();
+          } else {
+            logDebug('[HLS] Network error – max retries reached, giving up.');
+            clearLoadTimeout();
+            cleanupHls();
+            onVideoError();
+          }
+          break;
+        case Hls.ErrorTypes.MEDIA_ERROR:
+          logDebug('[HLS] Media error encountered, attempting recovery...');
+          hlsInstance.recoverMediaError();
+          break;
+        default:
+          clearLoadTimeout();
+          cleanupHls();
+          onVideoError();
+          break;
+      }
+    }
+  });
+}
+
+
+// Only reload media when the URL actually changes from an external source
+// (i.e. NOT when we set it ourselves — that path calls loadMediaSource directly).
+watch(() => room.url, (newUrl, oldUrl) => {
+  if (newUrl === oldUrl) return;
+  // Skip if we just set this URL ourselves; loadMediaSource was already called.
+  if (isSettingOwnUrl) {
+    isSettingOwnUrl = false;
+    return;
+  }
   nextTick(() => {
     loadMediaSource(newUrl);
+    lastLoadedUrl = newUrl;
   });
-}, { immediate: true });
+});
 
-function onVideoError() {
+function onVideoError(reason) {
+  clearLoadTimeout();
   if (watchInDesktop.value) {
     streamFailed.value = false;
     return;
@@ -1243,33 +1392,36 @@ function onVideoError() {
   const isMkv = currentUrl.includes('.mkv') || currentUrl.includes('matroska');
 
   let title = 'Stream Playback Error';
-  let reason = 'The stream could not be loaded or is unavailable from the provider.';
+  let hint = 'The stream could not be loaded or is unavailable from the provider.';
 
-  if (isMkv) {
+  if (reason === 'timeout') {
+    title = 'Stream Timed Out';
+    hint = 'The stream took too long to respond. It may have CORS restrictions, require a login, or the link may have expired. Try another source or use the Desktop Player.';
+  } else if (isMkv) {
     title = 'MKV Format Not Supported';
-    reason = 'This stream is packaged in an MKV container. Web browsers cannot decode MKV/TrueHD/DTS natively. Please choose an MP4 or HLS stream, or use the Desktop Player companion.';
+    hint = 'This stream is packaged in an MKV container. Web browsers cannot decode MKV/TrueHD/DTS natively. Please choose an MP4 or HLS stream, or use the Desktop Player companion.';
   } else if (err?.code === 4) { // MEDIA_ERR_SRC_NOT_SUPPORTED
     if (currentUrl.includes('file-examples.com')) {
       title = 'Sample Host Blocked (HTTP 403)';
-      reason = 'file-examples.com blocks direct browser streaming via Cloudflare Bot Challenge. Please use a verified direct stream or sample URL.';
+      hint = 'file-examples.com blocks direct browser streaming via Cloudflare Bot Challenge. Please use a verified direct stream or sample URL.';
     } else if (currentUrl.includes('r2.cloudflarestorage.com') || currentUrl.includes('r2.dev')) {
       title = 'Stream Link Expired (HTTP 403)';
-      reason = 'The temporary cloud storage link has expired or is restricted. Please select a fresher source.';
+      hint = 'The temporary cloud storage link has expired or is restricted. Please select a fresher source.';
     } else {
       title = 'Stream Link Expired or Format Unsupported';
-      reason = 'The link returned HTTP 403/404, or the audio codec (AC3/DTS) is not supported natively by your browser. Try another source or use Desktop Player.';
+      hint = 'The link returned HTTP 403/404, or the audio codec (AC3/DTS) is not supported natively by your browser. Try another source or use Desktop Player.';
     }
   } else if (err?.code === 2) { // MEDIA_ERR_NETWORK
     title = 'Network Connection Error';
-    reason = 'Network connection failed while reaching provider stream host.';
+    hint = 'Network connection failed while reaching the stream host.';
   } else if (err?.code === 3) { // MEDIA_ERR_DECODE
     title = 'Media Decode Error';
-    reason = 'An error occurred while decoding this video track.';
+    hint = 'This stream\'s video or audio codec is not supported by your browser (common with H.265/HEVC, AC3, or DTS). Try another source or use Desktop Player.';
   }
 
   streamFailed.value = true;
   streamErrorTitle.value = title;
-  streamErrorReason.value = reason;
+  streamErrorReason.value = hint;
   buffering.value = false;
   doToast(`Could not load stream: ${title}`, 4000);
 }
@@ -1402,17 +1554,26 @@ async function onStreamSelected({ url, mediaMeta, subtitles, sources }) {
     } catch {}
   }
 
+  // Flag so the room.url watcher skips the load (we do it manually below)
+  isSettingOwnUrl = true;
   room.url = url;
   room.mediaMeta = enrichedMeta;
   room.subtitles = subtitles || [];
   room.currentSubtitle = null;
   lastAppliedSeq = 0;
+  streamFailed.value = false;
 
   if (activeSubTrackBlobUrl.value) {
     URL.revokeObjectURL(activeSubTrackBlobUrl.value);
     activeSubTrackBlobUrl.value = null;
   }
   activeCues.value = [];
+
+  // Explicitly load the media (only once)
+  nextTick(() => {
+    loadMediaSource(url);
+    lastLoadedUrl = url;
+  });
 
   socket.send('player.url', { url, mediaMeta: enrichedMeta, subtitles });
 
@@ -1508,6 +1669,8 @@ function onLoadDirectUrl(url) {
   const cleanTitle = decodeURIComponent(rawFile).replace(/[._-]/g, ' ').trim() || 'Direct Stream';
   const meta = { title: cleanTitle };
 
+  // Flag so the room.url watcher skips the load (we do it manually below)
+  isSettingOwnUrl = true;
   room.url = url;
   room.mediaMeta = meta;
   room.subtitles = [];
@@ -1522,6 +1685,12 @@ function onLoadDirectUrl(url) {
     activeSubTrackBlobUrl.value = null;
   }
   activeCues.value = [];
+
+  // Explicitly load the media (only once)
+  nextTick(() => {
+    loadMediaSource(url);
+    lastLoadedUrl = url;
+  });
 
   socket.send('player.url', { url, mediaMeta: meta, subtitles: [] });
 
@@ -1695,6 +1864,15 @@ onMounted(async () => {
         room.currentSubtitle = defaultSub;
         loadCurrentSubtitle();
       }
+
+      // If joining a room with an existing stream, load it now.
+      // (The room.url watcher no longer uses immediate:true, so we load explicitly.)
+      if (data.url && data.url !== lastLoadedUrl) {
+        nextTick(() => {
+          loadMediaSource(data.url);
+          lastLoadedUrl = data.url;
+        });
+      }
     }),
 
     socket.on('room.users', ({ users }) => {
@@ -1719,7 +1897,6 @@ onMounted(async () => {
     socket.on('player.url', async (data) => {
       if (countdownInterval) clearInterval(countdownInterval);
       room.activeCountdown = null;
-      room.url = data.url;
 
       let enrichedMeta = data.mediaMeta;
       if (data.mediaMeta?.id) {
@@ -1737,9 +1914,19 @@ onMounted(async () => {
       lastAppliedSeq = 0;
       streamFailed.value = false;
 
+      // Only update room.url and reload media if this is a different URL than what we already loaded.
+      // This prevents the host from double-loading when the server echoes their own player.url back.
+      const incomingUrl = data.url || null;
+      const shouldReload = incomingUrl !== lastLoadedUrl;
+      room.url = incomingUrl;
+
       nextTick(() => {
         if (videoEl.value) {
           updateAudioTracks();
+        }
+        if (shouldReload) {
+          loadMediaSource(incomingUrl);
+          lastLoadedUrl = incomingUrl;
         }
       });
 
@@ -1845,6 +2032,7 @@ onMounted(async () => {
 
   onUnmounted(() => {
     cleanupHls();
+    clearLoadTimeout();
     offs.forEach(off => off());
     document.removeEventListener('keydown', onKeyDown);
     document.removeEventListener('click', closeAllMenus);
@@ -2660,6 +2848,16 @@ onMounted(async () => {
   color: #ffffff;
   border-color: rgba(255, 255, 255, 0.6);
   background: rgba(255, 255, 255, 0.06);
+}
+.btn-proxy-stream {
+  background: rgba(224, 168, 61, 0.12);
+  border: 1px solid rgba(224, 168, 61, 0.5);
+  color: #e0a83d;
+}
+.btn-proxy-stream:hover {
+  background: rgba(224, 168, 61, 0.22);
+  border-color: #e0a83d;
+  color: #f5c518;
 }
 
 /* ── Cinema Placeholder & Continue Watching ──────────────────────────────── */
