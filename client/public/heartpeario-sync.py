@@ -82,6 +82,7 @@ class SimpleWebSocketClient:
         idx = self.buf.index(b'\r\n\r\n') + 4
         self.buf = self.buf[idx:]
         self.connected = True
+        self.sock.settimeout(None)
 
     def _recv_exact(self, n):
         while len(self.buf) < n:
