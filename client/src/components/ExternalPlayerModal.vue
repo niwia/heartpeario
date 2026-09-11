@@ -19,6 +19,23 @@
       <!-- Content -->
       <div class="modal-body">
         
+        <!-- Viewing Mode Card -->
+        <div class="section-card mode-toggle-card">
+          <div class="mode-info">
+            <span class="mode-label">Your Viewing Mode:</span>
+            <span class="mode-badge" :class="watchInDesktop ? 'badge-desktop' : 'badge-browser'">
+              {{ watchInDesktop ? '🖥 Desktop Player (mpv)' : '🌐 Web Browser Video' }}
+            </span>
+          </div>
+          <button
+            class="btn-toggle-viewmode"
+            :class="{ 'btn-switch-to-desktop': !watchInDesktop, 'btn-switch-to-browser': watchInDesktop }"
+            @click="emit('switch-desktop', !watchInDesktop)"
+          >
+            {{ watchInDesktop ? 'Switch to Browser Video' : 'Switch to Desktop Player Screen' }}
+          </button>
+        </div>
+
         <!-- Synced Companion Section (Recommended) -->
         <div class="section-card sync-hero-card">
           <div class="card-badge">RECOMMENDED FOR MKV & 4K</div>
@@ -136,9 +153,13 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  watchInDesktop: {
+    type: Boolean,
+    default: false,
+  },
 });
 
-defineEmits(['close']);
+const emit = defineEmits(['close', 'switch-desktop']);
 
 const copiedCmd = ref(false);
 const copiedKey = ref(null);
@@ -294,6 +315,67 @@ function downloadM3u() {
   border-radius: 10px;
   padding: 16px 18px;
   position: relative;
+}
+
+.mode-toggle-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #16161d;
+  border-color: rgba(255, 255, 255, 0.14);
+}
+.mode-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mode-label {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+.mode-badge {
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+}
+.badge-desktop {
+  background: rgba(61, 190, 122, 0.15);
+  color: #3dbe7a;
+  border: 1px solid rgba(61, 190, 122, 0.35);
+}
+.badge-browser {
+  background: rgba(90, 125, 224, 0.15);
+  color: #5a7de0;
+  border: 1px solid rgba(90, 125, 224, 0.35);
+}
+.btn-toggle-viewmode {
+  padding: 7px 14px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-switch-to-desktop {
+  background: transparent;
+  border: 1px solid rgba(61, 190, 122, 0.4);
+  color: #3dbe7a;
+}
+.btn-switch-to-desktop:hover {
+  background: rgba(61, 190, 122, 0.12);
+  border-color: #3dbe7a;
+}
+.btn-switch-to-browser {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ffffff;
+}
+.btn-switch-to-browser:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ffffff;
 }
 
 .sync-hero-card {

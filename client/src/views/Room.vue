@@ -317,12 +317,19 @@
 
         <!-- ── TMDB-Enriched Netflix-Style Pause Screen Overlay ───────── -->
         <div
-          v-if="room.url && paused && !room.activeCountdown"
+          v-if="room.url && paused && !room.activeCountdown && !watchInDesktop && !streamFailed"
           class="netflix-pause-overlay"
           :style="pauseOverlayStyle"
           @click="togglePlay"
           title="Click anywhere to Play"
         >
+          <!-- Center Play Button with Glow -->
+          <div class="center-play-button">
+            <div class="center-play-circle">
+              <Icon name="play" size="34" />
+            </div>
+          </div>
+
           <div class="netflix-pause-content">
             <span class="pause-watching-label">You're watching</span>
             <h1 class="pause-title">{{ room.mediaMeta?.title || 'Video Stream' }}</h1>
@@ -358,7 +365,7 @@
           </div>
 
           <div class="pause-status-bottom-right">
-            <span class="pause-status-text">Paused</span>
+            <span class="pause-status-text">Click anywhere or press Space to Play</span>
           </div>
         </div>
 
@@ -380,9 +387,9 @@
           </button>
         </div>
 
-        <!-- ── Desktop Player Synced Screen (Active when companion is connected) ── -->
+        <!-- ── Desktop Player Synced Screen (Active only when user opts in to watch in mpv) ── -->
         <div
-          v-if="hasExternalCompanion && room.url"
+          v-if="watchInDesktop && room.url"
           class="desktop-player-overlay"
           :style="pauseOverlayStyle"
         >
@@ -408,16 +415,19 @@
                 <Icon name="monitor" size="16" />
                 <span>Player Options</span>
               </button>
-              <button class="btn-desktop-act btn-sec" @click="watchingInExternalPlayer = false; streamFailed = false; loadMediaSource(room.url)">
+              <button class="btn-desktop-act btn-sec" @click="watchInDesktop = false; streamFailed = false; loadMediaSource(room.url)">
                 <span>Switch to Browser Video</span>
               </button>
             </div>
           </div>
         </div>
 
-        <!-- ── Stream Error / Dead Link Fallback Overlay ────────────── -->
-        <div v-if="streamFailed && room.url && !hasExternalCompanion" class="stream-error-fallback">
+        <!-- ── Stream Error / Dead Link Fallback Overlay (Dismissible) ────────────── -->
+        <div v-if="streamFailed && room.url && !watchInDesktop" class="stream-error-fallback">
           <div class="stream-error-card">
+            <button class="err-close-btn" @click="streamFailed = false" title="Dismiss">
+              <Icon name="close" size="16" />
+            </button>
             <div class="err-icon-pill">
               <Icon name="stop" size="24" />
             </div>
@@ -433,7 +443,7 @@
                 <Icon name="sources" size="16" />
                 <span>Choose Another Source</span>
               </button>
-              <button class="btn-err-action btn-open-external" @click="showExternalPlayerModal = true">
+              <button class="btn-err-action btn-open-external" @click="watchInDesktop = true; showExternalPlayerModal = true">
                 <Icon name="monitor" size="16" />
                 <span>Play in mpv / VLC</span>
               </button>
@@ -568,9 +578,9 @@
                 <!-- External Player Sync (mpv / VLC) -->
                 <button
                   class="ctrl-btn"
-                  :class="{ 'btn-external-active': hasExternalCompanion }"
+                  :class="{ 'btn-external-active': watchInDesktop }"
                   @click="showExternalPlayerModal = true"
-                  :title="hasExternalCompanion ? 'External Player Synced (Active)' : 'External Player Sync (mpv / VLC)'"
+                  :title="watchInDesktop ? 'Watching on Desktop Player (Click to manage)' : (hasExternalCompanion ? 'Desktop Companion Connected (Click to watch)' : 'External Player Sync (mpv / VLC)')"
                 >
                   <Icon name="monitor" size="18" />
                   <span v-if="hasExternalCompanion" class="active-dot-mini"></span>
@@ -653,6 +663,8 @@
       :media-meta="room.mediaMeta"
       :current-time="currentTime"
       :users="room.users"
+      :watch-in-desktop="watchInDesktop"
+      @switch-desktop="watchInDesktop = $event"
       @close="showExternalPlayerModal = false"
     />
 
@@ -696,10 +708,10 @@ const showJoinPrompt = ref(false);
 const showUsersMenu = ref(false);
 const showRoomCodeMenu = ref(false);
 
-const watchingInExternalPlayer = ref(false);
+const watchInDesktop = ref(false);
 const externalPlayerState = ref(null);
 const externalCompanions = computed(() => (room.users || []).filter(u => u.isExternalPlayer));
-const hasExternalCompanion = computed(() => externalCompanions.value.length > 0 || watchingInExternalPlayer.value);
+const hasExternalCompanion = computed(() => externalCompanions.value.length > 0);
 const activeExternalCompanion = computed(() => externalCompanions.value[0] || null);
 
 const joinNameInput = ref('');
@@ -1219,7 +1231,7 @@ watch(() => room.url, (newUrl) => {
 }, { immediate: true });
 
 function onVideoError() {
-  if (hasExternalCompanion.value || watchingInExternalPlayer.value) {
+  if (watchInDesktop.value) {
     streamFailed.value = false;
     return;
   }
@@ -1235,14 +1247,17 @@ function onVideoError() {
 
   if (isMkv) {
     title = 'MKV Format Not Supported';
-    reason = 'This stream is packaged in an MKV container. Web browsers cannot decode MKV/TrueHD/DTS natively (unlike desktop Stremio/mpv). Please choose an MP4 or HLS stream, or use the Desktop Player companion.';
+    reason = 'This stream is packaged in an MKV container. Web browsers cannot decode MKV/TrueHD/DTS natively. Please choose an MP4 or HLS stream, or use the Desktop Player companion.';
   } else if (err?.code === 4) { // MEDIA_ERR_SRC_NOT_SUPPORTED
-    if (currentUrl.includes('r2.cloudflarestorage.com') || currentUrl.includes('r2.dev')) {
-      title = 'Stream Link Expired';
-      reason = 'The temporary cloud storage link has expired (HTTP 403) or is restricted. Please select a fresher source.';
+    if (currentUrl.includes('file-examples.com')) {
+      title = 'Sample Host Blocked (HTTP 403)';
+      reason = 'file-examples.com blocks direct browser streaming via Cloudflare Bot Challenge. Please use a verified direct stream or sample URL.';
+    } else if (currentUrl.includes('r2.cloudflarestorage.com') || currentUrl.includes('r2.dev')) {
+      title = 'Stream Link Expired (HTTP 403)';
+      reason = 'The temporary cloud storage link has expired or is restricted. Please select a fresher source.';
     } else {
-      title = 'Format / Codec Unsupported';
-      reason = 'Your browser cannot play this stream format or audio codec (e.g. AC3/EAC3/DTS). Please try another source or use Desktop Player (mpv).';
+      title = 'Stream Link Expired or Format Unsupported';
+      reason = 'The link returned HTTP 403/404, or the audio codec (AC3/DTS) is not supported natively by your browser. Try another source or use Desktop Player.';
     }
   } else if (err?.code === 2) { // MEDIA_ERR_NETWORK
     title = 'Network Connection Error';
@@ -1283,7 +1298,7 @@ async function applySync(data) {
       videoEl.value.currentTime = target;
     }
     paused.value = false;
-    if (!hasExternalCompanion.value) {
+    if (!watchInDesktop.value) {
       try {
         await videoEl.value.play();
       } catch (err) {
@@ -1488,12 +1503,19 @@ function openSearchFromSources() {
 
 function onLoadDirectUrl(url) {
   if (!url) return;
+  url = url.trim();
+  const rawFile = url.split('/').pop().split('?')[0] || 'Direct Stream';
+  const cleanTitle = decodeURIComponent(rawFile).replace(/[._-]/g, ' ').trim() || 'Direct Stream';
+  const meta = { title: cleanTitle };
+
   room.url = url;
-  room.mediaMeta = null;
+  room.mediaMeta = meta;
   room.subtitles = [];
   room.currentSubtitle = null;
-  cachedSources.value = [{ url, name: 'Direct Stream', addonName: 'Custom URL' }];
+  cachedSources.value = [{ url, name: cleanTitle, addonName: 'Direct URL' }];
   lastAppliedSeq = 0;
+  streamFailed.value = false;
+  watchInDesktop.value = false;
 
   if (activeSubTrackBlobUrl.value) {
     URL.revokeObjectURL(activeSubTrackBlobUrl.value);
@@ -1501,17 +1523,17 @@ function onLoadDirectUrl(url) {
   }
   activeCues.value = [];
 
-  socket.send('player.url', { url, mediaMeta: null, subtitles: [] });
+  socket.send('player.url', { url, mediaMeta: meta, subtitles: [] });
 
   saveRecentStreamRecord({
     url,
-    mediaMeta: { title: 'Direct Stream' },
+    mediaMeta: meta,
     subtitles: [],
     progressSeconds: 0,
     durationSeconds: 0,
   });
 
-  doToast('Loaded direct video stream');
+  doToast(`Loaded direct stream: ${cleanTitle}`);
 }
 
 function openSettingsTab(tabName) {
@@ -2400,7 +2422,7 @@ onMounted(async () => {
 .netflix-pause-overlay {
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 25% 45%, rgba(10, 10, 16, 0.85) 0%, rgba(0, 0, 0, 0.95) 100%);
+  background: linear-gradient(to top, rgba(8, 8, 14, 0.78) 0%, rgba(0, 0, 0, 0.15) 50%, rgba(8, 8, 14, 0.5) 100%);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -2408,6 +2430,30 @@ onMounted(async () => {
   z-index: 15;
   cursor: pointer;
   animation: fade-in 0.2s ease both;
+}
+.center-play-button {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.center-play-circle {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(224, 61, 90, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  box-shadow: 0 0 32px rgba(224, 61, 90, 0.55);
+  transition: transform 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+.netflix-pause-overlay:hover .center-play-circle {
+  transform: scale(1.12);
+  background: #e03d5a;
+  box-shadow: 0 0 42px rgba(224, 61, 90, 0.8);
 }
 .netflix-pause-content {
   max-width: 620px;
@@ -2515,6 +2561,7 @@ onMounted(async () => {
   animation: fade-in 0.25s ease both;
 }
 .stream-error-card {
+  position: relative;
   max-width: 480px;
   width: 100%;
   background: var(--surface);
@@ -2527,6 +2574,26 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9);
+}
+.err-close-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.err-close-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
 }
 .err-icon-pill {
   width: 52px; height: 52px;

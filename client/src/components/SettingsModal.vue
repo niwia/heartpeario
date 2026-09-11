@@ -121,10 +121,10 @@
         <!-- ── TAB 2: DIRECT STREAM URL ────────────────────────────── -->
         <div v-else-if="activeTab === 'direct-url'" class="tab-pane">
           <p class="tab-desc">
-            Load any direct video link (MP4, MKV, WebM, HLS m3u8) to watch in synchronized playback with your room.
+            Load any direct video link (MP4, WebM, HLS .m3u8, or MKV) to watch in synchronized playback with your room.
           </p>
 
-          <form class="direct-url-form" @submit.prevent="submitDirectUrl">
+          <form class="direct-url-form" @submit.prevent="handleDirectUrlSubmit">
             <input
               v-model="directUrlInput"
               type="url"
@@ -136,6 +136,32 @@
               Load Stream for Room
             </button>
           </form>
+
+          <!-- Verified Sample Streams for 1-Click Testing -->
+          <div class="sample-streams-section">
+            <div class="sample-label">Or test with verified sample streams:</div>
+            <div class="sample-buttons-grid">
+              <button
+                type="button"
+                class="btn-sample-stream"
+                @click="loadSampleUrl('https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4')"
+              >
+                <Icon name="play" size="13" />
+                <span>Big Buck Bunny (MP4 720p)</span>
+              </button>
+              <button
+                type="button"
+                class="btn-sample-stream"
+                @click="loadSampleUrl('https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8')"
+              >
+                <Icon name="play" size="13" />
+                <span>Tears of Steel (HLS adaptive)</span>
+              </button>
+            </div>
+            <p class="sample-hint">
+              💡 Tip: Avoid testing with sites like file-examples.com as Cloudflare bot challenges block direct browser media streaming (HTTP 403).
+            </p>
+          </div>
         </div>
 
         <!-- ── TAB 3: PROFILE SETTINGS ─────────────────────────────── -->
@@ -280,6 +306,12 @@ function handleDirectUrlSubmit() {
   if (!url) return;
   emit('load-direct-url', url);
   emit('close');
+}
+const submitDirectUrl = handleDirectUrlSubmit;
+
+function loadSampleUrl(url) {
+  directUrlInput.value = url;
+  handleDirectUrlSubmit();
 }
 
 function saveProfileName() {
@@ -448,6 +480,54 @@ function selectColor(color) {
 
 .msg-error { font-size: 0.8rem; color: #ff5e7e; }
 .msg-success { font-size: 0.8rem; color: #3dbe7a; }
+
+/* Direct URL Sample Streams */
+.sample-streams-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sample-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.75);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sample-buttons-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 8px;
+}
+.btn-sample-stream {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-sm);
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+}
+.btn-sample-stream:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.4);
+  color: #ffffff;
+}
+.sample-hint {
+  font-size: 0.75rem;
+  color: var(--muted);
+  line-height: 1.4;
+  margin: 0;
+}
 
 /* Addons list */
 .addons-list {
