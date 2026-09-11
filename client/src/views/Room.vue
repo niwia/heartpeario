@@ -1114,6 +1114,7 @@ function loadMediaSource(url) {
     if (videoEl.value.canPlayType('application/vnd.apple.mpegurl')) {
       // Native Apple HLS (Safari, iOS)
       videoEl.value.src = url;
+      videoEl.value.load();
     } else if (Hls.isSupported()) {
       hlsInstance = new Hls({
         enableWorker: true,
@@ -1123,6 +1124,17 @@ function loadMediaSource(url) {
 
       hlsInstance.loadSource(url);
       hlsInstance.attachMedia(videoEl.value);
+
+      hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+        logDebug('[HLS] Manifest parsed successfully');
+        if (videoEl.value) {
+          duration.value = videoEl.value.duration;
+          updateAudioTracks();
+        }
+        if (!paused.value) {
+          videoEl.value.play().catch(() => {});
+        }
+      });
 
       hlsInstance.on(Hls.Events.ERROR, (event, data) => {
         logDebug(`[HLS Error] ${data.type} - ${data.details} (fatal: ${data.fatal})`);
@@ -1153,9 +1165,8 @@ function loadMediaSource(url) {
   } else {
     // Direct media file (MP4, WebM, etc.)
     videoEl.value.src = url;
+    videoEl.value.load();
   }
-
-  videoEl.value.load();
 }
 
 watch(() => room.url, (newUrl) => {
@@ -1222,12 +1233,15 @@ async function applySync(data) {
     if (Math.abs(videoEl.value.currentTime - target) > 1.5) {
       videoEl.value.currentTime = target;
     }
+    paused.value = false;
     try {
       await videoEl.value.play();
     } catch (err) {
       logDebug('Play error on applySync:', err?.message);
+      if (videoEl.value?.error || err?.name === 'NotSupportedError') {
+        onVideoError();
+      }
     }
-    paused.value = false;
   }
 }
 
@@ -1339,12 +1353,6 @@ async function onStreamSelected({ url, mediaMeta, subtitles, sources }) {
 
   socket.send('player.url', { url, mediaMeta: enrichedMeta, subtitles });
 
-  nextTick(() => {
-    if (videoEl.value) {
-      videoEl.value.load();
-    }
-  });
-
   if (subtitles?.length) {
     // Pick stream-provided subtitle first if available, otherwise fallback to english/first
     const defaultSub = subtitles.find(s => s.isStreamSub && ['eng', 'en'].includes(s.lang?.toLowerCase()))
@@ -1446,12 +1454,6 @@ function onLoadDirectUrl(url) {
   activeCues.value = [];
 
   socket.send('player.url', { url, mediaMeta: null, subtitles: [] });
-
-  nextTick(() => {
-    if (videoEl.value) {
-      videoEl.value.load();
-    }
-  });
 
   saveRecentStreamRecord({
     url,
@@ -1667,7 +1669,6 @@ onMounted(async () => {
 
       nextTick(() => {
         if (videoEl.value) {
-          videoEl.value.load();
           updateAudioTracks();
         }
       });

@@ -142,6 +142,9 @@ class MpvController:
         self.sock = None
         self.is_paused = True
         self.current_url = None
+        self.current_title = None
+        self.running = False
+        self.listener_thread = None
 
     def start(self, initial_url=None):
         if os.path.exists(self.ipc_path):
@@ -156,6 +159,7 @@ class MpvController:
             "--idle=yes",
             "--force-window=immediate",
             "--title=HeartPeario Synced Player (mpv)",
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         ]
         if initial_url:
             cmd.append(initial_url)
@@ -171,7 +175,37 @@ class MpvController:
 
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.connect(self.ipc_path)
-        self.sock.settimeout(2.0)
+        self.running = True
+        self.listener_thread = threading.Thread(target=self._read_events, daemon=True)
+        self.listener_thread.start()
+
+    def _read_events(self):
+        buf = ""
+        while self.running and self.sock:
+            try:
+                data = self.sock.recv(4096)
+                if not data:
+                    break
+                buf += data.decode("utf-8", errors="ignore")
+                while "\n" in buf:
+                    line, buf = buf.split("\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        ev = json.loads(line)
+                        event_name = ev.get("event")
+                        if event_name in ("file-loaded", "playback-restart"):
+                            print_log("PLAYER", f"▶ mpv stream ready: {self.current_title or 'Video'}", "\033[92m")
+                        elif event_name == "end-file":
+                            reason = ev.get("reason")
+                            if reason == "error":
+                                print_log("ERROR", "mpv could not open stream: HTTP 404 / expired link / forbidden by host.", "\033[91m")
+                                print_log("HINT", "Please select another source in the HeartPeario web room.", "\033[93m")
+                    except Exception:
+                        pass
+            except Exception:
+                break
 
     def send_cmd(self, cmd_array):
         if not self.sock:
@@ -184,10 +218,11 @@ class MpvController:
 
     def load_url(self, url, title=None):
         self.current_url = url
+        self.current_title = title or "Video Stream"
         self.send_cmd(["loadfile", url, "replace"])
         if title:
             self.send_cmd(["set_property", "force-media-title", title])
-        self.set_pause(True)
+        self.send_cmd(["set_property", "pause", self.is_paused])
 
     def set_pause(self, paused):
         self.is_paused = paused
@@ -197,14 +232,10 @@ class MpvController:
         self.send_cmd(["seek", max(0, seconds), "absolute"])
 
     def get_time(self):
-        try:
-            self.send_cmd(["get_property", "time-pos"])
-            # Reading response could block, handled if needed
-        except Exception:
-            pass
         return 0
 
     def close(self):
+        self.running = False
         try:
             if self.sock:
                 self.sock.close()
@@ -347,8 +378,8 @@ def main():
         player.close()
         sys.exit(1)
 
-    # Send Join
-    ws.send(json.dumps({"type": "user.rename", "payload": {"name": display_name}}))
+    # Send User Name and Join
+    ws.send(json.dumps({"type": "user.name", "payload": {"name": display_name}}))
     ws.send(json.dumps({
         "type": "room.join",
         "payload": {
@@ -389,6 +420,8 @@ def main():
                     if time_pos > 0:
                         player.seek(time_pos)
                     player.set_pause(player_state.get("paused", True))
+                else:
+                    print_log("INFO", "Room is open. Waiting for host to select a movie/stream...", "\033[90m")
 
             # Stream URL changed
             elif msg_type == "player.url":
@@ -402,25 +435,24 @@ def main():
                     print_log("STREAM", "Stream unloaded by host", "\033[93m")
                     player.set_pause(True)
 
-            # Synchronized countdown action (PLAY / PAUSE / SEEK)
-            elif msg_type == "player.countdown_action":
-                action = payload.get("action")
-                target_time = payload.get("time") or 0
-                initiator = payload.get("initiator") or "Host"
+            # Synchronized countdown started by room
+            elif msg_type == "room.countdown":
+                action = payload.get("action", "PLAY")
+                target_time = payload.get("targetTime", 0)
+                initiator = payload.get("initiatedByName") or "Host"
+                action_text = "▶ PLAY" if action == "PLAY" else ("⏸ PAUSE" if action == "PAUSE" else f"SEEK to {int(target_time)}s")
+                print_log("COUNTDOWN", f"{action_text} in 3s (initiated by {initiator})", "\033[96m")
 
-                if action == "PLAY":
-                    print_log("ACTION", f"▶ PLAY at {int(target_time)}s (by {initiator})", "\033[92m")
-                    player.seek(target_time)
-                    player.set_pause(False)
-                elif action == "PAUSE":
-                    print_log("ACTION", f"⏸ PAUSE at {int(target_time)}s (by {initiator})", "\033[93m")
-                    player.seek(target_time)
-                    player.set_pause(True)
-
-            # Instant sync packet
+            # Synchronized playback state packet (after countdown or direct seek)
             elif msg_type == "player.sync":
                 is_paused = payload.get("paused", True)
                 target_time = payload.get("time", 0)
+                author = payload.get("authorName") or "Room"
+                if is_paused:
+                    print_log("ACTION", f"⏸ PAUSE at {int(target_time)}s ({author})", "\033[93m")
+                else:
+                    print_log("ACTION", f"▶ PLAY at {int(target_time)}s ({author})", "\033[92m")
+                player.seek(target_time)
                 player.set_pause(is_paused)
 
             elif msg_type == "room.countdown_cancelled":
