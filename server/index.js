@@ -22,7 +22,7 @@ const MIME_TYPES = {
   '.ttf': 'font/ttf',
 };
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   if (!fs.existsSync(DIST_DIR)) {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     return res.end('HeartPeario WebSocket Sync Server running.');
